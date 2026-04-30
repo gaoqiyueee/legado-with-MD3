@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -57,6 +58,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import io.legado.app.R
 import io.legado.app.ui.book.info.BookInfoActivity
+import io.legado.app.ui.book.readRecord.ReadRecordActivity
 import io.legado.app.ui.config.mainConfig.MainConfig
 import io.legado.app.ui.main.bookshelf.BookshelfScreen
 import io.legado.app.ui.main.bookshelf.BookshelfViewModel
@@ -64,6 +66,8 @@ import io.legado.app.ui.main.explore.ExploreScreen
 import io.legado.app.ui.main.my.MyScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssScreen
+import io.legado.app.ui.main.readRecord.ReadRecordTab
+import io.legado.app.ui.main.readRecord.handleBookClick
 import io.legado.app.ui.theme.regularHazeEffect
 import io.legado.app.ui.widget.components.AppNavigationBar
 import io.legado.app.ui.widget.components.AppNavigationBarItem
@@ -110,10 +114,10 @@ fun MainScreen(
         drawRect(floatingBarSurfaceColor)
         drawContent()
     }
-    val destinations = remember(MainConfig.showDiscovery, MainConfig.showRSS) {
+    val destinations = remember(MainConfig.showDiscovery, MainConfig.showBookSource, MainConfig.showRSS) {
         MainDestination.mainDestinations.filter {
             when (it) {
-                MainDestination.Explore -> MainConfig.showDiscovery
+                MainDestination.Explore -> MainConfig.showDiscovery || MainConfig.showBookSource
                 MainDestination.Rss -> MainConfig.showRSS
                 else -> true
             }
@@ -349,7 +353,7 @@ fun MainScreen(
                 }
             },
             contentWindowInsets = WindowInsets(0)
-        ) { _ ->
+        ) { scaffoldPadding ->
             Box(
                 modifier = Modifier
                     .hazeSource(hazeState)
@@ -387,6 +391,16 @@ fun MainScreen(
                         )
 
                         MainDestination.Explore -> ExploreScreen()
+
+                        MainDestination.ReadRecordTab -> ReadRecordTab(
+                            bottomPadding = scaffoldPadding.calculateBottomPadding(),
+                            onBookClick = { bookName, bookAuthor ->
+                                coroutineScope.launch {
+                                    handleBookClick(context, bookName, bookAuthor)
+                                }
+                            }
+                        )
+
                         MainDestination.Rss -> RssScreen(
                             onOpenSort = { sourceUrl, sortUrl, key ->
                                 onNavigateToRssSort(sourceUrl, sortUrl, key)
@@ -395,6 +409,7 @@ fun MainScreen(
                                 onNavigateToRssRead(title, origin, link, openUrl)
                             }
                         )
+
                         MainDestination.My -> MyScreen(
                             viewModel = koinViewModel(),
                             onOpenSettings = onOpenSettings,

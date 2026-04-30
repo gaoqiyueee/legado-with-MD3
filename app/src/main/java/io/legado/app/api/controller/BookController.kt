@@ -7,8 +7,11 @@ import com.bumptech.glide.Glide
 import io.legado.app.api.ReturnData
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
+import io.legado.app.data.entities.ReadNote
+import io.legado.app.constant.BookStorageState
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.CacheManager
 import io.legado.app.help.book.BookHelp
@@ -27,6 +30,7 @@ import io.legado.app.utils.fromJsonObject
 import io.legado.app.utils.printOnDebug
 import io.legado.app.utils.stackTraceStr
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import java.io.File
@@ -46,6 +50,7 @@ object BookController {
     val bookshelf: ReturnData
         get() {
             val books = appDb.bookDao.all
+                .filter { it.storageState == BookStorageState.LOCAL }
             val returnData = ReturnData()
             return if (books.isEmpty()) {
                 returnData.setErrorMsg("还没有添加小说")
@@ -306,9 +311,11 @@ object BookController {
      */
     fun saveWebReadConfig(postData: String?): ReturnData {
         val returnData = ReturnData()
-        postData?.let {
+        if (postData != null) {
             CacheManager.put("webReadConfig", postData)
-        } ?: CacheManager.delete("webReadConfig")
+        } else {
+            CacheManager.delete("webReadConfig")
+        }
         return returnData.setData("")
     }
 
@@ -320,6 +327,120 @@ object BookController {
         val data = CacheManager.get("webReadConfig")
             ?: return returnData.setErrorMsg("没有配置")
         return returnData.setData(data)
+    }
+
+    /**
+     * 获取书签列表
+     */
+    fun getBookmarks(parameters: Map<String, List<String>>): ReturnData {
+        val returnData = ReturnData()
+        val bookName = parameters["bookName"]?.firstOrNull()
+        val bookAuthor = parameters["bookAuthor"]?.firstOrNull()
+        if (bookName.isNullOrBlank() || bookAuthor.isNullOrBlank()) {
+            return returnData.setErrorMsg("书名和作者不能为空")
+        }
+        val bookmarks = runBlocking {
+            appDb.bookmarkDao.flowByBook(bookName, bookAuthor).first()
+        }
+        return returnData.setData(bookmarks)
+    }
+
+    /**
+     * 保存书签
+     */
+    suspend fun saveBookmark(postData: String?): ReturnData {
+        val returnData = ReturnData()
+        GSON.fromJsonObject<Bookmark>(postData).getOrNull()?.let { bookmark ->
+            runBlocking {
+                appDb.bookmarkDao.insert(bookmark)
+            }
+            return returnData.setData(bookmark)
+        }
+        return returnData.setErrorMsg("格式不对")
+    }
+
+    /**
+     * 删除书签
+     */
+    suspend fun deleteBookmark(postData: String?): ReturnData {
+        val returnData = ReturnData()
+        val time = postData?.toLongOrNull()
+        if (time == null) {
+            return returnData.setErrorMsg("时间戳不能为空")
+        }
+        runBlocking {
+            val bookmark = Bookmark(time)
+            appDb.bookmarkDao.delete(bookmark)
+        }
+        return returnData.setData("")
+    }
+
+    /**
+     * 获取笔记列表
+     */
+    fun getNotes(parameters: Map<String, List<String>>): ReturnData {
+        val returnData = ReturnData()
+        val bookName = parameters["bookName"]?.firstOrNull()
+        val bookAuthor = parameters["bookAuthor"]?.firstOrNull()
+        if (bookName.isNullOrBlank() || bookAuthor.isNullOrBlank()) {
+            return returnData.setErrorMsg("书名和作者不能为空")
+        }
+        val notes = runBlocking {
+            appDb.readNoteDao.flowByBook(bookName, bookAuthor).first()
+        }
+        return returnData.setData(notes)
+    }
+
+    /**
+     * 保存笔记
+     */
+    suspend fun saveNote(postData: String?): ReturnData {
+        val returnData = ReturnData()
+        GSON.fromJsonObject<ReadNote>(postData).getOrNull()?.let { note ->
+            runBlocking {
+                appDb.readNoteDao.insert(note)
+            }
+            return returnData.setData(note)
+        }
+        return returnData.setErrorMsg("格式不对")
+    }
+
+    /**
+     * 删除笔记
+     */
+    suspend fun deleteNote(postData: String?): ReturnData {
+        val returnData = ReturnData()
+        val noteId = postData
+        if (noteId.isNullOrBlank()) {
+            return returnData.setErrorMsg("笔记ID不能为空")
+        }
+        runBlocking {
+            appDb.readNoteDao.delete(noteId)
+        }
+        return returnData.setData("")
+    }
+
+    /**
+     * 保存 Web 端阅读时间
+     */
+    suspend fun saveReadSession(postData: String?): ReturnData {
+        val returnData = ReturnData()
+        data class WebReadSession(
+            val bookName: String,
+            val bookAuthor: String,
+            val startTime: Long,
+            val endTime: Long
+        )
+        GSON.fromJsonObject<WebReadSession>(postData).getOrNull()?.let { session ->
+            ReadBook.saveExternalReadSession(
+                bookName = session.bookName,
+                bookAuthor = session.bookAuthor,
+                startTime = session.startTime,
+                endTime = session.endTime
+            )
+            return returnData.setData("")
+        }
+        return returnData.setErrorMsg("格式不对")
     }
 
 }

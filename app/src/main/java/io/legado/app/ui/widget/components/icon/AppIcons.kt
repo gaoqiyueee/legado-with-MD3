@@ -119,6 +119,12 @@ object AppIcons {
                 if (selected) Icons.Default.RssFeed else Icons.Outlined.RssFeed
             }
 
+            MainDestination.ReadRecordTab -> if (isMiuix) {
+                if (selected) MiuixIcons.WorldClock else MiuixIcons.WorldClock
+            } else {
+                if (selected) Icons.Default.History else Icons.Default.History
+            }
+
             MainDestination.My -> if (isMiuix) {
                 if (selected) MiuixIcons.Heavy.Settings else MiuixIcons.Regular.Settings
             } else {

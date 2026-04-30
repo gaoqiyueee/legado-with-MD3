@@ -17,6 +17,11 @@ sealed class MainDestination(
         labelId = R.string.discovery
     )
 
+    object ReadRecordTab : MainDestination(
+        route = "readRecord",
+        labelId = R.string.read_record
+    )
+
     object Rss : MainDestination(
         route = "rss",
         labelId = R.string.rss
@@ -28,6 +33,6 @@ sealed class MainDestination(
     )
 
     companion object {
-        val mainDestinations = listOf(Bookshelf, Explore, Rss, My)
+        val mainDestinations = listOf(Bookshelf, Explore, ReadRecordTab, Rss, My)
     }
 }

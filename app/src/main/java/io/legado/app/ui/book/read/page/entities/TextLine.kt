@@ -56,6 +56,8 @@ data class TextLine(
     val height: Float inline get() = lineBottom - lineTop
     val canvasRecorder = CanvasRecorderFactory.create()
     var searchResultColumnCount = 0
+    var bookmarkColumnCount = 0
+    var highlightColumnCount = 0
     var isReadAloud: Boolean = false
         set(value) {
             if (field != value) {
@@ -175,6 +177,12 @@ data class TextLine(
             canvas.drawLine(lineStart + indentWidth, lineY, lineEnd, lineY, linePaint)
         }
 
+        if (bookmarkColumnCount > 0) {
+            val bookmarkPaint = ChapterProvider.bookmarkPaint
+            val lineY = height - 3.dpToPx()
+            canvas.drawLine(lineStart + indentWidth, lineY, lineEnd, lineY, bookmarkPaint)
+        }
+
         if (ReadBookConfig.underline && !isImage && ReadBook.book?.isImage != true) {
             drawUnderline(canvas, ReadBookConfig.dottedLine)
         }
@@ -213,6 +221,25 @@ data class TextLine(
             if (column.selected) {
                 canvas.drawRect(column.start, 0f, column.end, height, view.selectedPaint)
             }
+            column.highlightColor?.let { color ->
+                val highlightPaint = android.graphics.Paint().apply {
+                    this.color = color
+                    this.alpha = 80
+                    style = android.graphics.Paint.Style.FILL
+                }
+                canvas.drawRect(column.start, 0f, column.end, height, highlightPaint)
+            }
+        }
+
+        if (bookmarkColumnCount > 0) {
+            val bookmarkPaint = ChapterProvider.bookmarkPaint
+            val lineY = height - 3.dpToPx()
+            for (i in columns.indices) {
+                val column = columns[i] as TextColumn
+                if (column.isBookmark) {
+                    canvas.drawLine(column.start, lineY, column.end, lineY, bookmarkPaint)
+                }
+            }
         }
     }
 
@@ -241,7 +268,7 @@ data class TextLine(
         if (wordSpacing != 0f && (!atLeastApi26 || !wordSpacingWorking)) {
             return false
         }
-        return searchResultColumnCount == 0
+        return searchResultColumnCount == 0 && bookmarkColumnCount == 0 && highlightColumnCount == 0
     }
 
     fun invalidate() {

@@ -12,6 +12,9 @@ import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppConst
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
+import io.legado.app.constant.BookStorageState
+import io.legado.app.help.AppWebDav
+import io.legado.app.model.localBook.LocalBook
 import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
@@ -25,6 +28,7 @@ import io.legado.app.domain.usecase.UpdateBooksGroupUseCase
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
+import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isUpError
 import io.legado.app.help.book.removeType
 import io.legado.app.help.book.sync
@@ -142,8 +146,11 @@ class BookshelfViewModel(
     val booksFlow = combine(groupIdFlow, refreshTrigger) { groupId, _ -> groupId }
         .flatMapLatest { groupId ->
             appDb.bookDao.flowBookShelfByGroup(groupId).map { list ->
+                // 仅"全部"分组显示元信息/归档书籍，其他分组只显示本地已下载书籍
+                val filtered = if (groupId == BookGroup.IdAll) list
+                               else list.filter { it.storageState == BookStorageState.LOCAL }
                 sortBooks(
-                    list,
+                    filtered,
                     groupsFlow.value.find { it.groupId == groupId })
             }
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
@@ -352,10 +359,12 @@ class BookshelfViewModel(
             refreshTrigger
         ) { books, searchKey, isSearchMode, groups, _ ->
             val group = groups.find { it.groupId == groupId }
+            val storageFiltered = if (groupId == BookGroup.IdAll) books
+                                  else books.filter { it.storageState == BookStorageState.LOCAL }
             val filtered = if (!isSearchMode || searchKey.isBlank()) {
-                books
+                storageFiltered
             } else {
-                books.filter { it.matchesSearchKey(searchKey) }
+                storageFiltered.filter { it.matchesSearchKey(searchKey) }
             }
             sortBooks(filtered, group)
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
@@ -445,6 +454,15 @@ class BookshelfViewModel(
             val bookUrls = books.filter { !it.isLocal && it.canUpdate }.map { it.bookUrl }
             val fullBooks = bookUrls.mapNotNull { appDb.bookDao.getBook(it) }
             addToWaitUp(fullBooks)
+        }
+        // 同步 WebDAV 数据（书签、阅读时长双向合并；阅读进度比较后询问）
+        if (AppWebDav.isOk && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
+            execute {
+                kotlin.runCatching { AppWebDav.uploadBookmarks() }
+                kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                kotlin.runCatching { AppWebDav.uploadReadRecords() }
+                kotlin.runCatching { AppWebDav.downloadReadRecords() }
+            }
         }
     }
 
@@ -805,7 +823,135 @@ class BookshelfViewModel(
     private fun BookShelfItem.matchesSearchKey(searchKey: String): Boolean {
         return name.contains(searchKey, true) ||
                 author.contains(searchKey, true) ||
-                originName.contains(searchKey, true)
+                (!remark.isNullOrBlank() && remark.contains(searchKey, true))
+    }
+
+    // ─── WebDAV 元信息书籍管理 ─────────────────────────────────────────────────
+
+    /**
+     * 扫描 WebDAV /books/ 目录，把尚未在书架上的书文件生成 METADATA_ONLY 条目。
+     * 触发方式：书架菜单 → "从 WebDAV 扫描书籍"。
+     */
+    fun scanWebDavBooks(onFinish: (added: Int) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val webDav = AppWebDav.defaultBookWebDav ?: run {
+                withContext(Dispatchers.Main) { onFinish(0) }
+                return@launch
+            }
+            val remoteList = kotlin.runCatching {
+                webDav.getRemoteBookList(webDav.rootBookUrl)
+            }.getOrNull() ?: run {
+                withContext(Dispatchers.Main) { onFinish(0) }
+                return@launch
+            }
+            var added = 0
+            remoteList.forEach { remoteBook ->
+                // 已在书架上（按文件名判断）则跳过
+                if (appDb.bookDao.getBookByFileName(remoteBook.filename) != null) return@forEach
+                val book = Book(
+                    bookUrl = remoteBook.path,
+                    origin = BookType.webDavTag + remoteBook.path,
+                    originName = remoteBook.filename,
+                    name = remoteBook.filename.substringBeforeLast("."),
+                    author = "",
+                    type = BookType.text,
+                    storageState = BookStorageState.METADATA_ONLY
+                )
+                appDb.bookDao.insert(book)
+                added++
+            }
+            withContext(Dispatchers.Main) { onFinish(added) }
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载 METADATA_ONLY 或 ARCHIVED 书籍到本地。
+     * 下载成功后创建新的 LOCAL 书籍条目，并删除原元信息条目。
+     */
+    fun downloadMetadataBook(book: Book, onResult: (success: Boolean, msg: String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            kotlin.runCatching {
+                // 从 DB 重取完整 Book，确保 origin 字段存在（toLightBook() 不含 origin）
+                val fullBook = appDb.bookDao.getBook(book.bookUrl)
+                    ?: error("书籍不存在")
+                val webDav = AppWebDav.defaultBookWebDav
+                    ?: error("WebDAV 未配置")
+                val remoteUrl = fullBook.getRemoteUrl()
+                    ?: error("此书没有 WebDAV 远程地址")
+                val remoteBook = webDav.getRemoteBook(remoteUrl)
+                    ?: error("WebDAV 上找不到该书文件")
+                val localUri = webDav.downloadRemoteBook(remoteBook)
+                val newBooks = LocalBook.importFiles(localUri)
+                val newBook = newBooks.firstOrNull() ?: error("书籍导入失败")
+                // 将用户自定义信息迁移到新条目
+                // 同时保留 origin（webDavTag + remoteUrl），确保归档选项可用
+                // name/author 由 importFile() 从文件元数据提取（analyzeNameAuthor + upBookInfo），
+                // 不做覆盖：首次下载时取 EPUB 内准确元数据；归档循环时同一文件提取结果与原来一致
+                newBook.apply {
+                    origin = fullBook.origin
+                    group = fullBook.group
+                    order = fullBook.order
+                    customCoverUrl = fullBook.customCoverUrl
+                    customIntro = fullBook.customIntro
+                    remark = fullBook.remark
+                    // 阅读进度：恢复上次读到的章节和位置
+                    durChapterIndex = fullBook.durChapterIndex
+                    durChapterPos = fullBook.durChapterPos
+                    durChapterTime = fullBook.durChapterTime
+                    durChapterTitle = fullBook.durChapterTitle
+                    storageState = BookStorageState.LOCAL
+                    save()
+                }
+                // 仅当新条目与旧条目 bookUrl 不同时才删除旧条目，
+                // 避免 importFile() 复用同 bookUrl 对象时自删
+                if (newBook.bookUrl != fullBook.bookUrl) {
+                    appDb.bookDao.delete(fullBook)
+                }
+                withContext(Dispatchers.Main) { onResult(true, "下载完成") }
+            }.onFailure { e ->
+                withContext(Dispatchers.Main) { onResult(false, e.message ?: "下载失败") }
+            }
+        }
+    }
+
+    /**
+     * 归档 LOCAL 书籍：在 WebDAV 上已有备份时，将本地条目转换为 METADATA_ONLY 云端条目，
+     * 删除本地文件。归档后书籍与"扫描云端书籍"得到的条目完全一致，再次点击走相同下载流程。
+     */
+    fun archiveBook(book: Book, onResult: (success: Boolean, msg: String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            kotlin.runCatching {
+                val remoteUrl = book.getRemoteUrl()
+                    ?: error("此书未备份到 WebDAV，无法归档")
+                // 创建与扫描云端书籍完全相同格式的 METADATA_ONLY 条目
+                val cloudBook = Book(
+                    bookUrl = remoteUrl,
+                    origin = book.origin,
+                    originName = book.originName,
+                    name = book.name,
+                    author = book.author,
+                    coverUrl = book.coverUrl,
+                    customCoverUrl = book.customCoverUrl,
+                    intro = book.intro,
+                    customIntro = book.customIntro,
+                    remark = book.remark,
+                    group = book.group,
+                    order = book.order,
+                    type = BookType.text,
+                    storageState = BookStorageState.METADATA_ONLY,
+                    durChapterIndex = book.durChapterIndex,
+                    durChapterPos = book.durChapterPos,
+                    durChapterTime = book.durChapterTime,
+                    durChapterTitle = book.durChapterTitle,
+                )
+                appDb.bookDao.insert(cloudBook)
+                LocalBook.deleteBook(book, deleteOriginal = true)
+                appDb.bookDao.delete(book)
+                withContext(Dispatchers.Main) { onResult(true, "已归档") }
+            }.onFailure { e ->
+                withContext(Dispatchers.Main) { onResult(false, e.message ?: "归档失败") }
+            }
+        }
     }
 
 }

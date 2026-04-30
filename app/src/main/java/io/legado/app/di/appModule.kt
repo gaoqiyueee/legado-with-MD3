@@ -55,6 +55,7 @@ import io.legado.app.help.coil.CoverInterceptor
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.okHttpClientManga
 import io.legado.app.ui.book.bookmark.AllBookmarkViewModel
+import io.legado.app.ui.book.note.AllNoteViewModel
 import io.legado.app.ui.book.cache.manage.BookCacheManageViewModel
 import io.legado.app.ui.book.changecover.ChangeCoverViewModel
 import io.legado.app.ui.book.changesource.ChangeBookSourceComposeViewModel
@@ -101,6 +102,7 @@ import org.koin.dsl.module
 val appModule = module {
 
     single { get<AppDatabase>().readRecordDao }
+    single { get<AppDatabase>().readNoteDao }
     single { get<AppDatabase>().bookDao }
     single { get<AppDatabase>().bookChapterDao }
     single { get<AppDatabase>().bookGroupDao }
@@ -171,6 +173,7 @@ val appModule = module {
     viewModelOf(::GroupViewModel)
     viewModelOf(::ReplaceRuleViewModel)
     viewModelOf(::AllBookmarkViewModel)
+    viewModelOf(::AllNoteViewModel)
     viewModelOf(::TxtTocRuleViewModel)
     viewModelOf(::OtherConfigViewModel)
     viewModelOf(::ReadConfigViewModel)

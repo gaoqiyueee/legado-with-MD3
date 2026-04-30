@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import io.legado.app.constant.BookType
+import io.legado.app.constant.BookStorageState
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
@@ -76,6 +77,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -89,8 +93,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         where type & ${BookType.text} > 0
         and type & ${BookType.local} = 0
         and ((SELECT sum(groupId) FROM book_groups where groupId > 0) & `group`) = 0
@@ -109,6 +114,9 @@ interface BookDao {
         name,
         author,
         originName,
+        intro,
+        customIntro,
+        remark,
         coverUrl,
         customCoverUrl,
         durChapterTitle,
@@ -122,7 +130,8 @@ interface BookDao {
         type,
         `group`,
         `order`,
-        canUpdate
+        canUpdate,
+        storageState
     FROM books
     ORDER BY durChapterTime DESC
 """
@@ -139,6 +148,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -152,8 +164,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE type & ${BookType.audio} > 0
         """
     )
@@ -169,6 +182,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -182,8 +198,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE type & ${BookType.local} > 0
         """
     )
@@ -204,6 +221,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -217,8 +237,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         where type & ${BookType.audio} = 0 and type & ${BookType.local} = 0
         and ((SELECT sum(groupId) FROM book_groups where groupId > 0) & `group`) = 0
         """
@@ -240,6 +261,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -253,8 +277,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         where type & ${BookType.local} > 0
         and ((SELECT sum(groupId) FROM book_groups where groupId > 0) & `group`) = 0
         """
@@ -271,6 +296,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -284,8 +312,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE (`group` & :group) > 0
         """
     )
@@ -303,6 +332,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -316,8 +348,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE name like '%'||:key||'%' or author like '%'||:key||'%' or originName like '%'||:key||'%'
         """
     )
@@ -333,6 +366,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -346,8 +382,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         where type & ${BookType.updateError} > 0 
         order by durChapterTime desc
         """
@@ -364,6 +401,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -377,8 +417,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE durChapterIndex = 0 AND durChapterPos = 0
         """
     )
@@ -394,6 +435,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -407,8 +451,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE totalChapterNum > 0 AND durChapterIndex >= totalChapterNum - 1
         """
     )
@@ -424,6 +469,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -437,8 +485,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE totalChapterNum > 0 AND durChapterIndex > 0 AND durChapterIndex < totalChapterNum - 1
         """
     )
@@ -454,6 +503,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -467,8 +519,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE type & ${BookType.image} > 0
         """
     )
@@ -484,6 +537,9 @@ interface BookDao {
             name,
             author,
             originName,
+            intro,
+            customIntro,
+            remark,
             coverUrl,
             customCoverUrl,
             durChapterTitle,
@@ -497,8 +553,9 @@ interface BookDao {
             type,
             `group`,
             `order`,
-            canUpdate
-        FROM books 
+            canUpdate,
+            storageState
+        FROM books
         WHERE type & ${BookType.text} > 0
         """
     )

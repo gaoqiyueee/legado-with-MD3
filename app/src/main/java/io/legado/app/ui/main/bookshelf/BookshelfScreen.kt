@@ -75,7 +75,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import io.legado.app.R
 import io.legado.app.base.BaseRuleEvent
+import io.legado.app.constant.BookStorageState
+import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.help.AppWebDav
 import io.legado.app.ui.about.AppLogSheet
 import io.legado.app.ui.book.info.GroupSelectSheet
 import io.legado.app.ui.config.bookshelfConfig.BookshelfConfig
@@ -141,6 +144,17 @@ fun BookshelfScreen(
     var showBatchDownloadConfirmDialog by remember { mutableStateOf(false) }
     var isEditMode by remember { mutableStateOf(false) }
     var selectedBookUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 下载元信息/归档书籍的确认对话框
+    var pendingDownloadBook by remember { mutableStateOf<Book?>(null) }
+
+    // 书籍点击拦截：元信息/归档书籍不能直接打开，弹确认下载对话框
+    val guardedBookClick: (BookShelfItem) -> Unit = { item ->
+        if (item.storageState != BookStorageState.LOCAL) {
+            pendingDownloadBook = item.toLightBook()
+        } else {
+            onBookClick(item)
+        }
+    }
 
     val clipboardManager = LocalClipboard.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -342,21 +356,13 @@ fun BookshelfScreen(
         state = uiState,
         showSearchAction = true,
         onSearchToggle = { active ->
-            if (BookshelfConfig.bookshelfSearchActionDirectToSearch) {
-                onNavigateToSearch(uiState.searchKey.trim())
-            } else {
-                viewModel.setSearchMode(active)
-                if (!active && uiState.selectedGroupId != currentTabGroupId) {
-                    viewModel.changeGroup(currentTabGroupId)
-                }
+            viewModel.setSearchMode(active)
+            if (!active && uiState.selectedGroupId != currentTabGroupId) {
+                viewModel.changeGroup(currentTabGroupId)
             }
         },
         onSearchQueryChange = { viewModel.setSearchKey(it) },
-        onSearchSubmit = { rawQuery ->
-            rawQuery.trim()
-                .takeIf { it.isNotEmpty() }
-                ?.let(onNavigateToSearch)
-        },
+        onSearchSubmit = { /* 书架搜索只做本地过滤，不跳全局搜索 */ },
         searchTrailingIcon = {
             if (uiState.searchKey.isNotEmpty()) {
                 TopBarActionButton(
@@ -472,6 +478,18 @@ fun BookshelfScreen(
                     onClick = { showImportSheet = true; dismiss() },
                     leadingIcon = { Icon(Icons.Default.CloudDownload, null) }
                 )
+                if (AppWebDav.isOk) {
+                    RoundDropdownMenuItem(
+                        text = "从 WebDAV 扫描书籍",
+                        onClick = {
+                            viewModel.scanWebDavBooks { added ->
+                                context.toastOnUi(if (added > 0) "发现 $added 本新书" else "未发现新书")
+                            }
+                            dismiss()
+                        },
+                        leadingIcon = { Icon(Icons.Default.Wifi, null) }
+                    )
+                }
                 RoundDropdownMenuItem(
                     text = stringResource(R.string.log),
                     onClick = {
@@ -714,7 +732,7 @@ fun BookshelfScreen(
                             onToggleBookSelection = { toggleBookSelection(it.bookUrl) },
                             onSaveBookOrder = {},
                             onGlobalSearch = { onNavigateToSearch(uiState.searchKey.trim()) },
-                            onBookClick = onBookClick,
+                            onBookClick = guardedBookClick,
                             onBookLongClick = onBookLongClick
                         )
                     } else {
@@ -747,7 +765,7 @@ fun BookshelfScreen(
                                         viewModel.saveBookOrder(reorderedBooks)
                                     },
                                     onGlobalSearch = { onNavigateToSearch(uiState.searchKey.trim()) },
-                                    onBookClick = onBookClick,
+                                    onBookClick = guardedBookClick,
                                     onBookLongClick = onBookLongClick
                                 )
                             }
@@ -935,6 +953,26 @@ fun BookshelfScreen(
         dismissText = stringResource(android.R.string.cancel),
         onDismiss = { showBatchDownloadConfirmDialog = false }
     )
+
+    // 元信息/归档书籍下载确认对话框
+    pendingDownloadBook?.let { book ->
+        val stateLabel = if (book.storageState == BookStorageState.METADATA_ONLY) "云端书籍" else "已归档书籍"
+        AppAlertDialog(
+            show = true,
+            onDismissRequest = { pendingDownloadBook = null },
+            title = "$stateLabel：${book.name}",
+            text = "此书没有本地文件，是否从 WebDAV 下载到本地？",
+            confirmText = "下载",
+            onConfirm = {
+                pendingDownloadBook = null
+                viewModel.downloadMetadataBook(book) { success, msg ->
+                    context.toastOnUi(msg)
+                }
+            },
+            dismissText = stringResource(android.R.string.cancel),
+            onDismiss = { pendingDownloadBook = null }
+        )
+    }
 
     if (uiState.isLoading) {
         Dialog(onDismissRequest = {}) {

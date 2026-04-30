@@ -19,5 +19,9 @@ data class ReadRecordSession(
     val endTime: Long = 0,
 
     // 本次阅读的字数
-    val words: Long = 0
+    val words: Long = 0,
+
+    /** 书籍的稳定唯一标识，对应 Book.bookUrl，不随书名/作者修改而变化 */
+    @ColumnInfo(defaultValue = "")
+    val bookUrl: String = ""
 )

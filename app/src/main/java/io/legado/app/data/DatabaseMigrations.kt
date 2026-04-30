@@ -20,7 +20,7 @@ object DatabaseMigrations {
             migration_31_32, migration_32_33, migration_33_34, migration_34_35,
             migration_35_36, migration_36_37, migration_37_38, migration_38_39,
             migration_39_40, migration_40_41, migration_41_42, migration_42_43,
-            migration_82_83,
+            migration_82_83, migration_85_86, migration_86_87,
         )
     }
 
@@ -451,6 +451,56 @@ object DatabaseMigrations {
         }
     }
 
+
+    /**
+     * 为 readRecord 和 readRecordSession 增加 bookUrl 列，用于稳定标识书籍，
+     * 不随用户修改书名/作者而改变。迁移时顺带从 books 表回填已知 bookUrl。
+     */
+    private val migration_85_86 = object : Migration(85, 86) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                "ALTER TABLE `readRecord` ADD COLUMN `bookUrl` TEXT NOT NULL DEFAULT ''"
+            )
+            database.execSQL(
+                "ALTER TABLE `readRecordSession` ADD COLUMN `bookUrl` TEXT NOT NULL DEFAULT ''"
+            )
+            // 回填：根据 books 表中的当前 name+author 反查 bookUrl
+            // 用 COALESCE 保证找不到时仍保持 '' 而不是 NULL（NOT NULL 约束）
+            database.execSQL(
+                """
+                UPDATE readRecord SET bookUrl = COALESCE((
+                    SELECT bookUrl FROM books
+                    WHERE books.name = readRecord.bookName
+                      AND books.author = readRecord.bookAuthor
+                    LIMIT 1
+                ), '') WHERE bookUrl = ''
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                UPDATE readRecordSession SET bookUrl = COALESCE((
+                    SELECT bookUrl FROM books
+                    WHERE books.name = readRecordSession.bookName
+                      AND books.author = readRecordSession.bookAuthor
+                    LIMIT 1
+                ), '') WHERE bookUrl = ''
+                """.trimIndent()
+            )
+        }
+    }
+
+    /**
+     * 为 books 表增加 storageState 列，用于标记书籍的本地存储状态：
+     * 0=LOCAL（本地文件存在），1=METADATA_ONLY（仅元信息），2=ARCHIVED（归档）。
+     * 现有书籍全部默认 0=LOCAL，不影响现有逻辑。
+     */
+    private val migration_86_87 = object : Migration(86, 87) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                "ALTER TABLE `books` ADD COLUMN `storageState` INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+    }
 
     @Suppress("ClassName")
     class Migration_54_55 : AutoMigrationSpec {

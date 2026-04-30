@@ -103,6 +103,7 @@ object Restore {
     private suspend fun restore(path: String) {
         val aes = BackupAES()
         fileToListT<Book>(path, "bookshelf.json")?.let {
+            if (BackupConfig.ignoreBookshelf) return@let
             it.forEach { book ->
                 book.upType()
             }

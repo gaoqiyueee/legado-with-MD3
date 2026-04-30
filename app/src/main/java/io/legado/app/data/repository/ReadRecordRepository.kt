@@ -8,6 +8,7 @@ import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.entities.readRecord.ReadRecordTimelineDay
+import io.legado.app.help.AppWebDav
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.Date
@@ -75,7 +76,6 @@ class ReadRecordRepository(
 
     suspend fun getMergeCandidates(targetRecord: ReadRecord): List<ReadRecord> {
         return dao.getReadRecordsByNameExcludingAuthor(
-            targetRecord.deviceId,
             targetRecord.bookName,
             targetRecord.bookAuthor
         )
@@ -90,6 +90,7 @@ class ReadRecordRepository(
         val dateString = DateUtil.format(Date(newSession.startTime), DatePattern.NORM_DATE_PATTERN)
         updateReadRecordDetail(newSession, segmentDuration, newSession.words, dateString)
         updateReadRecord(newSession, segmentDuration)
+        kotlin.runCatching { AppWebDav.uploadReadRecords() }
     }
 
     private suspend fun updateReadRecord(session: ReadRecordSession, durationDelta: Long) {
@@ -99,7 +100,9 @@ class ReadRecordRepository(
             dao.update(
                 existingRecord.copy(
                     readTime = existingRecord.readTime + durationDelta,
-                    lastRead = session.endTime
+                    lastRead = session.endTime,
+                    // 若现有记录 bookUrl 为空，用本次 session 的 bookUrl 补充
+                    bookUrl = existingRecord.bookUrl.ifEmpty { session.bookUrl }
                 )
             )
         } else {
@@ -109,7 +112,8 @@ class ReadRecordRepository(
                     bookName = session.bookName,
                     bookAuthor = session.bookAuthor,
                     readTime = durationDelta,
-                    lastRead = session.endTime
+                    lastRead = session.endTime,
+                    bookUrl = session.bookUrl
                 )
             )
         }
@@ -227,6 +231,115 @@ class ReadRecordRepository(
         dao.deleteSessionsByBook(record.deviceId, record.bookName, record.bookAuthor)
     }
 
+    /**
+     * 以 bookUrl 为稳定标识，自动合并同一本书被拆分成多条的阅读记录。
+     * 通常在阅读记录页面打开时调用一次。
+     * 流程：
+     * 1. 回填空 bookUrl（根据 books 表匹配 name+author）
+     * 2. 查找同一 bookUrl 下存在多条 ReadRecord 的情况
+     * 3. 以当前书架中的 name/author 为目标，将其余记录合并进去
+     */
+    @Transaction
+    suspend fun autoMergeByBookUrl() {
+        // 1. 回填
+        dao.backfillBookUrls()
+        dao.backfillSessionBookUrls()
+
+        // 2. 找出所有有 bookUrl 的记录，按 bookUrl 分组，合并重复
+        val allRecords = dao.all
+        val withUrl = allRecords.filter { it.bookUrl.isNotEmpty() }
+        val groups = withUrl.groupBy { it.bookUrl }
+
+        groups.forEach { (bookUrl, records) ->
+            if (records.size <= 1) return@forEach
+            val target = records.maxByOrNull { it.lastRead } ?: return@forEach
+            val sources = records.filter {
+                it.bookName != target.bookName || it.bookAuthor != target.bookAuthor
+            }
+            if (sources.isEmpty()) return@forEach
+            sources.forEach { source ->
+                renameAndMergeReadRecord(source.bookName, source.bookAuthor, target.bookName, target.bookAuthor)
+            }
+            // 合并后再回填 bookUrl
+            dao.getReadRecord(target.deviceId, target.bookName, target.bookAuthor)?.let { merged ->
+                if (merged.bookUrl.isEmpty()) {
+                    dao.insert(merged.copy(bookUrl = bookUrl))
+                }
+            }
+        }
+
+        // 3. 回退策略：对 bookUrl 为空的记录，按书名分组合并
+        //    适用于修改作者前创建的历史记录（迁移时无法回填 bookUrl）
+        val withoutUrl = dao.all.filter { it.bookUrl.isEmpty() }
+        val byName = withoutUrl.groupBy { it.bookName }
+        byName.forEach { (_, nameRecords) ->
+            if (nameRecords.size <= 1) return@forEach
+            val target = nameRecords.maxByOrNull { it.lastRead } ?: return@forEach
+            val sources = nameRecords.filter { it.bookAuthor != target.bookAuthor }
+            if (sources.isEmpty()) return@forEach
+            sources.forEach { source ->
+                renameAndMergeReadRecord(source.bookName, source.bookAuthor, target.bookName, target.bookAuthor)
+            }
+        }
+    }
+
+    /**
+     * 将阅读记录从旧书名/作者完整迁移到新书名/作者，包括 readRecord、readRecordDetail、readRecordSession。
+     * 若新书名/作者下已有记录，则合并（累加时长、合并每日详情、更新会话归属）。
+     */
+    @Transaction
+    suspend fun renameAndMergeReadRecord(
+        oldName: String, oldAuthor: String,
+        newName: String, newAuthor: String
+    ) {
+        val deviceId = getCurrentDeviceId()
+        val oldRecord = dao.getReadRecord(deviceId, oldName, oldAuthor) ?: return
+
+        val existingNew = dao.getReadRecord(deviceId, newName, newAuthor)
+        // 保留 bookUrl：优先用已有新记录的，其次用旧记录的
+        val mergedBookUrl = existingNew?.bookUrl?.takeIf { it.isNotEmpty() }
+            ?: oldRecord.bookUrl
+
+        // Merge top-level ReadRecord
+        if (existingNew == null) {
+            dao.insert(oldRecord.copy(bookName = newName, bookAuthor = newAuthor, bookUrl = mergedBookUrl))
+        } else {
+            dao.insert(
+                existingNew.copy(
+                    readTime = existingNew.readTime + oldRecord.readTime,
+                    lastRead = max(existingNew.lastRead, oldRecord.lastRead),
+                    bookUrl = mergedBookUrl
+                )
+            )
+        }
+        dao.deleteReadRecord(oldRecord)
+
+        // Merge readRecordDetail
+        val oldDetails = dao.getDetailsByBook(deviceId, oldName, oldAuthor)
+        oldDetails.forEach { detail ->
+            val existingDetail = dao.getDetail(deviceId, newName, newAuthor, detail.date)
+            if (existingDetail == null) {
+                dao.insertDetail(detail.copy(bookName = newName, bookAuthor = newAuthor))
+            } else {
+                dao.insertDetail(
+                    existingDetail.copy(
+                        readTime = existingDetail.readTime + detail.readTime,
+                        readWords = existingDetail.readWords + detail.readWords,
+                        firstReadTime = min(existingDetail.firstReadTime, detail.firstReadTime),
+                        lastReadTime = max(existingDetail.lastReadTime, detail.lastReadTime)
+                    )
+                )
+            }
+        }
+        dao.deleteDetailsByBook(deviceId, oldName, oldAuthor)
+
+        // Migrate readRecordSession
+        val oldSessions = dao.getSessionsByBook(deviceId, oldName, oldAuthor)
+        oldSessions.forEach { session ->
+            dao.updateSession(session.copy(bookName = newName, bookAuthor = newAuthor))
+        }
+    }
+
     @Transaction
     suspend fun mergeReadRecordInto(targetRecord: ReadRecord, sourceRecords: List<ReadRecord>) {
         sourceRecords.forEach { sourceRecord ->
@@ -237,7 +350,6 @@ class ReadRecordRepository(
     @Transaction
     private suspend fun mergeSingleReadRecordInto(targetRecord: ReadRecord, sourceRecord: ReadRecord) {
         if (targetRecord == sourceRecord) return
-        if (targetRecord.deviceId != sourceRecord.deviceId) return
         if (targetRecord.bookName != sourceRecord.bookName) return
 
         val source = dao.getReadRecord(

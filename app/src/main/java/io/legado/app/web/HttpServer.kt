@@ -66,6 +66,11 @@ class HttpServer(port: Int) : NanoHTTPD(port) {
                             "/saveReplaceRule" -> ReplaceRuleController.saveRule(postData)
                             "/deleteReplaceRule" -> ReplaceRuleController.delete(postData)
                             "/testReplaceRule" -> ReplaceRuleController.testRule(postData)
+                            "/saveBookmark" -> BookController.saveBookmark(postData)
+                            "/deleteBookmark" -> BookController.deleteBookmark(postData)
+                            "/saveNote" -> BookController.saveNote(postData)
+                            "/deleteNote" -> BookController.deleteNote(postData)
+                            "/saveReadSession" -> BookController.saveReadSession(postData)
                             else -> null
                         }
                     }
@@ -87,6 +92,8 @@ class HttpServer(port: Int) : NanoHTTPD(port) {
                         "/getRssSource" -> RssSourceController.getSource(parameters)
                         "/getRssSources" -> RssSourceController.sources
                         "/getReplaceRules" -> ReplaceRuleController.allRules
+                        "/getBookmarks" -> BookController.getBookmarks(parameters)
+                        "/getNotes" -> BookController.getNotes(parameters)
                         else -> null
                     }
                 }

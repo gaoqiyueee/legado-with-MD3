@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import io.legado.app.R
+import io.legado.app.data.appDb
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.help.book.isOnLineTxt
 import io.legado.app.help.config.AppConfig
@@ -14,6 +15,7 @@ import io.legado.app.model.ReadBook
 import io.legado.app.ui.association.OpenUrlConfirmActivity
 import io.legado.app.ui.book.read.page.delegate.PageDelegate
 import io.legado.app.ui.book.read.page.entities.TextLine
+import io.legado.app.ui.book.read.page.entities.TextChapter
 import io.legado.app.ui.book.read.page.entities.TextPage
 import io.legado.app.ui.book.read.page.entities.TextPos
 import io.legado.app.ui.book.read.page.entities.column.BaseColumn
@@ -25,16 +27,25 @@ import io.legado.app.ui.book.read.page.entities.column.TextColumn
 import io.legado.app.ui.book.read.page.entities.column.TextHtmlColumn
 import io.legado.app.ui.book.read.page.provider.ChapterProvider
 import io.legado.app.ui.book.read.page.provider.TextPageFactory
+import io.legado.app.ui.book.bookmark.BookmarkDialog
 import io.legado.app.ui.widget.dialog.PhotoDialog
 import io.legado.app.utils.activity
 import io.legado.app.utils.dpToPx
 import io.legado.app.utils.getCompatColor
+import io.legado.app.utils.sendToClip
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivity
 import io.legado.app.utils.toastOnUi
+import io.legado.app.lib.dialogs.selector
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 
 /**
  * 阅读内容视图
@@ -47,6 +58,16 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
             style = Paint.Style.FILL
         }
     }
+
+    private val bookmarkPaint by lazy {
+        Paint().apply {
+            color = android.graphics.Color.parseColor("#FF9800") // 橙色书签下划线
+            isAntiAlias = true
+            strokeWidth = 3.dpToPx().toFloat()
+            style = Paint.Style.STROKE
+        }
+    }
+
     private var callBack: CallBack
     private val visibleRect = ChapterProvider.visibleRect
     val selectStart = TextPos(0, -1, -1)
@@ -90,6 +111,8 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
         } else {
             invalidate()
         }
+        // 加载书签并标记
+        loadBookmarksForCurrentPage()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -253,6 +276,44 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
         }
         var handled = false
         touch(x, y) { _, textPos, textPage, textLine, column ->
+            // 优先处理书签点击（下划线区域）
+            if (column is TextBaseColumn && column.isBookmark) {
+                val charPos = textLine.chapterPosition
+                val chapterIndex = textPage.textChapter?.chapter?.index ?: -1
+                if (chapterIndex >= 0) {
+                    GlobalScope.launch(Dispatchers.IO) {
+                        val bookmarks = appDb.bookmarkDao.getByChapter(
+                            ReadBook.book?.name ?: return@launch,
+                            ReadBook.book?.author ?: return@launch,
+                            chapterIndex
+                        )
+                        val bookmark = bookmarks.firstOrNull { bm ->
+                            charPos >= bm.chapterPos && charPos < bm.chapterPos + bm.bookText.length.coerceAtLeast(1)
+                        }
+                        if (bookmark != null) {
+                            withContext(Dispatchers.Main) {
+                                val ctx = activity as? androidx.appcompat.app.AppCompatActivity ?: return@withContext
+                                val items = listOf<CharSequence>(
+                                    context.getString(R.string.copy_text),
+                                    context.getString(R.string.delete),
+                                    context.getString(R.string.edit)
+                                )
+                                ctx.selector(items) { _, index ->
+                                    when (index) {
+                                        0 -> context.sendToClip(bookmark.bookText)
+                                        1 -> GlobalScope.launch(Dispatchers.IO) {
+                                            appDb.bookmarkDao.delete(bookmark)
+                                        }
+                                        2 -> ctx.showDialogFragment(BookmarkDialog(bookmark))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    handled = true
+                }
+                return@touch
+            }
             when (column) {
                 is ButtonColumn -> {
                     context.toastOnUi("Button Pressed!")
@@ -767,6 +828,37 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
             }
         }
         private val cursorWidth = 24.dpToPx()
+    }
+
+    /**
+     * 加载当前页面的书签并标记，可供外部调用以强制刷新
+     */
+    fun reloadBookmarks() {
+        loadBookmarksForCurrentPage()
+    }
+
+    private var bookmarkCollectJob: Job? = null
+
+    /**
+     * 响应式加载书签：collect 流，DB 变化时自动重新标记并重绘
+     * 每次 setContent 调用时取消上一个 job，重新订阅（书名/作者不变则复用）
+     */
+    private fun loadBookmarksForCurrentPage() {
+        val bookName = ReadBook.book?.name ?: return
+        val bookAuthor = ReadBook.book?.author ?: return
+        bookmarkCollectJob?.cancel()
+        bookmarkCollectJob = GlobalScope.launch(Dispatchers.IO) {
+            try {
+                appDb.bookmarkDao.flowByBook(bookName, bookAuthor).collect { bookmarks ->
+                    val chapter = textPage.textChapter
+                    chapter.clearBookmarks()
+                    chapter.markBookmarks(bookmarks)
+                    withContext(Dispatchers.Main) { postInvalidate() }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     interface CallBack {

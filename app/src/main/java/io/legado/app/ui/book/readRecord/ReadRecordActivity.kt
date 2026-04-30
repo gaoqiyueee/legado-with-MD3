@@ -6,10 +6,10 @@ import androidx.lifecycle.lifecycleScope
 import io.legado.app.base.BaseComposeActivity
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.readRecord.ReadRecordSession
+import io.legado.app.ui.book.info.BookInfoActivity
 import io.legado.app.ui.book.search.SearchActivity
 import io.legado.app.ui.theme.AppTheme
 import io.legado.app.utils.startActivity
-import io.legado.app.utils.startActivityForBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,8 +31,13 @@ class ReadRecordActivity : BaseComposeActivity() {
                         val book = withContext(Dispatchers.IO) {
                             appDb.bookDao.getBook(bookName, bookAuthor)
                         }
-                        if (book != null) startActivityForBook(book)
-                        else {
+                        if (book != null) {
+                            startActivity<BookInfoActivity> {
+                                putExtra("name", book.name)
+                                putExtra("author", book.author)
+                                putExtra("bookUrl", book.bookUrl)
+                            }
+                        } else {
                             startActivity<SearchActivity> {
                                 putExtra("key", bookName)
                             }

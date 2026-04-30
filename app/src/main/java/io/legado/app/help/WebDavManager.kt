@@ -6,6 +6,8 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookProgress
+import io.legado.app.data.entities.ReadNote
+import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.storage.Backup
@@ -268,6 +270,64 @@ class WebDavManager(
         }
     }
 
+    /**
+     * 上传阅读记录
+     */
+    suspend fun uploadReadRecords(records: List<ReadRecord>) {
+        if (records.isEmpty()) return
+        val auth = requireAuthorization()
+        if (!NetworkUtils.isAvailable()) return
+        val json = GSON.toJson(records)
+        val url = buildRootUrl(configFlow.value) + "readRecords/records.json"
+        WebDav(url, auth).upload(json.toByteArray(), "application/json")
+    }
+
+    /**
+     * 下载阅读记录
+     */
+    suspend fun downloadReadRecords(): List<ReadRecord>? {
+        val auth = requireAuthorization()
+        val url = buildRootUrl(configFlow.value) + "readRecords/records.json"
+        return kotlin.runCatching {
+            WebDav(url, auth).download().let { byteArray ->
+                val json = String(byteArray)
+                if (json.isJson()) {
+                    return GSON.fromJsonObject<List<ReadRecord>>(json).getOrNull()
+                }
+            }
+            null
+        }.getOrNull()
+    }
+
+    /**
+     * 上传阅读笔记
+     */
+    suspend fun uploadNotes(notes: List<ReadNote>) {
+        if (notes.isEmpty()) return
+        val auth = requireAuthorization()
+        if (!NetworkUtils.isAvailable()) return
+        val json = GSON.toJson(notes)
+        val url = buildRootUrl(configFlow.value) + "readNotes/notes.json"
+        WebDav(url, auth).upload(json.toByteArray(), "application/json")
+    }
+
+    /**
+     * 下载阅读笔记
+     */
+    suspend fun downloadNotes(): List<ReadNote>? {
+        val auth = requireAuthorization()
+        val url = buildRootUrl(configFlow.value) + "readNotes/notes.json"
+        return kotlin.runCatching {
+            WebDav(url, auth).download().let { byteArray ->
+                val json = String(byteArray)
+                if (json.isJson()) {
+                    return GSON.fromJsonObject<List<ReadNote>>(json).getOrNull()
+                }
+            }
+            null
+        }.getOrNull()
+    }
+
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         if (key == PreferKey.webDavUrl
             || key == PreferKey.webDavAccount
@@ -304,6 +364,8 @@ class WebDavManager(
             WebDav(rootUrl + "bookProgress/", auth).makeAsDir()
             WebDav(rootUrl + "books/", auth).makeAsDir()
             WebDav(rootUrl + "background/", auth).makeAsDir()
+            WebDav(rootUrl + "readRecords/", auth).makeAsDir()
+            WebDav(rootUrl + "readNotes/", auth).makeAsDir()
             val defaultBookWebDav = RemoteBookWebDav(rootUrl + "books/", auth)
             _state.value = WebDavState.Ready(rootUrl, auth, defaultBookWebDav)
         } catch (e: CancellationException) {

@@ -44,7 +44,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.ui.about.AboutActivity
+import io.legado.app.ui.book.annotation.AllAnnotationActivity
 import io.legado.app.ui.book.bookmark.AllBookmarkActivity
+import io.legado.app.ui.book.note.AllNoteActivity
 import io.legado.app.ui.book.readRecord.ReadRecordActivity
 import io.legado.app.ui.book.source.manage.BookSourceActivity
 import io.legado.app.ui.book.toc.rule.TxtTocRuleActivity
@@ -161,10 +163,10 @@ fun MyScreen(
                         }
                     )
                     ClickableSettingItem(
-                        title = stringResource(R.string.bookmark),
+                        title = "书签",
                         imageVector = Icons.Default.Bookmark,
                         onClick = {
-                            onNavigate(PrefClickEvent.StartActivity(AllBookmarkActivity::class.java))
+                            onNavigate(PrefClickEvent.StartActivity(AllAnnotationActivity::class.java))
                         }
                     )
                     ClickableSettingItem(

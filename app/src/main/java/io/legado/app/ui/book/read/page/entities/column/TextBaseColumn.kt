@@ -9,4 +9,7 @@ interface TextBaseColumn : BaseColumn {
     val charData: String
     var selected: Boolean
     var isSearchResult: Boolean
+    var isBookmark: Boolean
+    /** 笔记高亮背景色，null 表示无高亮 */
+    var highlightColor: Int?
 }

@@ -509,6 +509,10 @@ class PageView(context: Context) : FrameLayout(context) {
         binding.contentTextView.isMainView = true
     }
 
+    fun reloadBookmarks() {
+        binding.contentTextView.reloadBookmarks()
+    }
+
     fun selectStartMove(x: Float, y: Float) {
         binding.contentTextView.selectStartMove(x, y - headerHeight)
     }

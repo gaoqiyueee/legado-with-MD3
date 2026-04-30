@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
+import io.legado.app.constant.BookStorageState
 import io.legado.app.constant.BookType
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.ui.config.bookshelfConfig.BookshelfConfig
@@ -411,16 +412,14 @@ fun BookItem(
 ) {
     val unreadCount = book.getUnreadChapterNum()
     val unreadText = if (BookshelfConfig.showUnread && unreadCount > 0) unreadCount.toString() else null
-    val bookTypeLabel = if (BookshelfConfig.showTip) {
-        when {
-            book.isAudio -> stringResource(R.string.audio)
-            book.isImage -> stringResource(R.string.manga)
-            (book.type and BookType.webFile) > 0 -> stringResource(R.string.web_file)
-            book.isLocal -> stringResource(R.string.local)
-            else -> stringResource(R.string.noval)
-        }
-    } else {
-        null
+    val bookTypeLabel = when {
+        book.storageState != BookStorageState.LOCAL -> "云端"
+        !BookshelfConfig.showTip -> null
+        book.isAudio -> stringResource(R.string.audio)
+        book.isImage -> stringResource(R.string.manga)
+        (book.type and BookType.webFile) > 0 -> stringResource(R.string.web_file)
+        book.isLocal -> stringResource(R.string.local)
+        else -> stringResource(R.string.noval)
     }
     val matchedSourceLabel = if (
         isSearchMode &&

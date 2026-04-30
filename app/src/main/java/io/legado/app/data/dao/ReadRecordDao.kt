@@ -22,10 +22,14 @@ interface ReadRecordDao {
 
     @get:Query("select * from readRecordSession")
     val allSession: List<ReadRecordSession>
-    @Query("SELECT sum(readTime) FROM readRecord")
+    @Query("""
+        SELECT SUM(maxTime) FROM (
+            SELECT MAX(readTime) AS maxTime FROM readRecord GROUP BY bookName, bookAuthor
+        )
+    """)
     fun getTotalReadTime(): Flow<Long?>
 
-    @Query("select sum(readTime) from readRecord where bookName = :bookName")
+    @Query("SELECT MAX(readTime) FROM readRecord WHERE bookName = :bookName")
     fun getReadTime(bookName: String): Long?
 
     @Query("select readTime from readRecord where deviceId = :deviceId and bookName = :bookName and bookAuthor = :bookAuthor")
@@ -43,7 +47,28 @@ interface ReadRecordDao {
     @Delete
     fun delete(vararg record: ReadRecord)
 
-    @Query("delete from readRecord")
+    @Query("SELECT * FROM readRecord WHERE bookUrl = :bookUrl AND bookUrl != '' ORDER BY lastRead DESC")
+    suspend fun getReadRecordsByBookUrl(bookUrl: String): List<ReadRecord>
+
+    @Query("""
+        UPDATE readRecord SET bookUrl = COALESCE((
+            SELECT b.bookUrl FROM books b
+            WHERE b.name = readRecord.bookName AND b.author = readRecord.bookAuthor
+            LIMIT 1
+        ), '') WHERE bookUrl = ''
+    """)
+    suspend fun backfillBookUrls()
+
+    @Query("""
+        UPDATE readRecordSession SET bookUrl = COALESCE((
+            SELECT b.bookUrl FROM books b
+            WHERE b.name = readRecordSession.bookName AND b.author = readRecordSession.bookAuthor
+            LIMIT 1
+        ), '') WHERE bookUrl = ''
+    """)
+    suspend fun backfillSessionBookUrls()
+
+    @Query("DELETE FROM readRecord")
     fun clear()
 
     @Query("delete from readRecord where bookName = :bookName and bookAuthor = :bookAuthor")
@@ -97,17 +122,31 @@ interface ReadRecordDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertSession(session: ReadRecordSession)
 
-    /** 获取所有 ReadRecord，按最后阅读时间倒序排列 */
-    @Query("SELECT * FROM readRecord ORDER BY lastRead DESC")
+    /** 获取所有 ReadRecord，按书名+作者聚合（合并多设备记录），按最后阅读时间倒序排列 */
+    @Query("""
+        SELECT deviceId, bookName, bookAuthor, bookUrl,
+               SUM(readTime) AS readTime,
+               MAX(lastRead) AS lastRead
+        FROM readRecord
+        GROUP BY bookName, bookAuthor
+        ORDER BY lastRead DESC
+    """)
     fun getAllReadRecordsSortedByLastRead(): Flow<List<ReadRecord>>
 
-    /** 搜索 ReadRecord，按最后阅读时间倒序排列 */
-    @Query("SELECT * FROM readRecord WHERE bookName LIKE '%' || :query || '%' OR bookAuthor LIKE '%' || :query || '%' ORDER BY lastRead DESC")
+    /** 搜索 ReadRecord，按书名+作者聚合，按最后阅读时间倒序排列 */
+    @Query("""
+        SELECT deviceId, bookName, bookAuthor, bookUrl,
+               SUM(readTime) AS readTime,
+               MAX(lastRead) AS lastRead
+        FROM readRecord
+        WHERE bookName LIKE '%' || :query || '%' OR bookAuthor LIKE '%' || :query || '%'
+        GROUP BY bookName, bookAuthor
+        ORDER BY lastRead DESC
+    """)
     fun searchReadRecordsByLastRead(query: String): Flow<List<ReadRecord>>
 
-    @Query("SELECT * FROM readRecord WHERE deviceId = :deviceId AND bookName = :bookName AND bookAuthor != :excludeAuthor ORDER BY lastRead DESC")
+    @Query("SELECT * FROM readRecord WHERE bookName = :bookName AND bookAuthor != :excludeAuthor ORDER BY lastRead DESC")
     suspend fun getReadRecordsByNameExcludingAuthor(
-        deviceId: String,
         bookName: String,
         excludeAuthor: String
     ): List<ReadRecord>

@@ -298,6 +298,7 @@
     <string name="group_yf">Awaiting more</string>
     <string name="bookmark">Bookmarks</string>
     <string name="bookmark_add">Add to Bookmarks</string>
+    <string name="add_note">Add Note</string>
     <string name="action_del">Delete</string>
     <string name="load_over_time">Loading timeout</string>
     <string name="join_group">Follow:%s</string>
@@ -845,6 +846,7 @@
     <string name="scan_folder">Intelligent scanning</string>
     <string name="import_file_name">Imported-file name</string>
     <string name="no_book">No books</string>
+    <string name="book_not_downloaded">此书尚未下载，请返回书架从 WebDAV 下载后再阅读</string>
     <string name="keep_original_name">Keep the original name</string>
     <string name="click_regional_config">Screen Touch Control</string>
     <string name="close">Close</string>

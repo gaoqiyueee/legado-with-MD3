@@ -12,6 +12,7 @@ import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadNote
 import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
 import io.legado.app.help.book.BookHelp
@@ -71,6 +72,26 @@ data class TocBookmarkItemUi(
     val chapterName: String,
     val isDur: Boolean,
     val raw: Bookmark
+)
+
+/**
+ * 目录页书签/笔记统一条目
+ * [isNote] 为 true 表示笔记，false 表示书签
+ */
+@Immutable
+data class TocAnnotationItemUi(
+    val id: String,
+    val chapterIndex: Int,
+    val chapterPos: Int,
+    /** 选中的原文片段（书签的 bookText 或笔记的 selectedText） */
+    val selectedText: String,
+    /** 用户填写的批注（书签的 content 或笔记的 noteContent） */
+    val annotation: String,
+    val chapterName: String,
+    val isDur: Boolean,
+    val isNote: Boolean,
+    val rawBookmark: Bookmark?,
+    val rawNote: ReadNote?
 )
 
 data class TocActionState(
@@ -194,6 +215,70 @@ class TocViewModel(
                             }
                             .toList()
                     }
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /** 书签 + 笔记合并列表，按章节位置排序 */
+    val annotationList: StateFlow<List<TocAnnotationItemUi>> =
+        combine(
+            bookState.filterNotNull(),
+            _searchKey
+        ) { book, query ->
+            book to query
+        }
+            .flatMapLatest { (book, query) ->
+                combine(
+                    appDb.bookmarkDao.flowByBook(book.name, book.author),
+                    appDb.readNoteDao.flowByBook(book.name, book.author)
+                ) { bookmarks, notes ->
+                    val durIndex = book.durChapterIndex
+                    val bookmarkItems = bookmarks
+                        .filter {
+                            query.isBlank() ||
+                                    it.content.contains(query, ignoreCase = true) ||
+                                    it.bookText.contains(query, ignoreCase = true)
+                        }
+                        .map { bm ->
+                            TocAnnotationItemUi(
+                                id = "bm_${bm.time}",
+                                chapterIndex = bm.chapterIndex,
+                                chapterPos = bm.chapterPos,
+                                selectedText = bm.bookText,
+                                annotation = bm.content,
+                                chapterName = bm.chapterName,
+                                isDur = bm.chapterIndex == durIndex,
+                                isNote = false,
+                                rawBookmark = bm,
+                                rawNote = null
+                            )
+                        }
+                    val noteItems = notes
+                        .filter {
+                            query.isBlank() ||
+                                    it.selectedText.contains(query, ignoreCase = true) ||
+                                    it.noteContent.contains(query, ignoreCase = true)
+                        }
+                        .map { note ->
+                            TocAnnotationItemUi(
+                                id = "note_${note.noteId}",
+                                chapterIndex = note.chapterIndex,
+                                chapterPos = note.chapterPos,
+                                selectedText = note.selectedText,
+                                annotation = note.noteContent,
+                                chapterName = note.chapterName,
+                                isDur = note.chapterIndex == durIndex,
+                                isNote = true,
+                                rawBookmark = null,
+                                rawNote = note
+                            )
+                        }
+                    (bookmarkItems + noteItems)
+                        .sortedWith(compareBy({ it.chapterIndex }, { it.chapterPos }))
+                }
             }
             .stateIn(
                 scope = viewModelScope,
@@ -489,6 +574,12 @@ class TocViewModel(
 
     fun deleteBookmark(bookmark: Bookmark) =
         viewModelScope.launch(Dispatchers.IO) { appDb.bookmarkDao.delete(bookmark) }
+
+    fun deleteNote(note: ReadNote) =
+        viewModelScope.launch(Dispatchers.IO) { appDb.readNoteDao.delete(note.noteId) }
+
+    fun updateNote(note: ReadNote) =
+        viewModelScope.launch(Dispatchers.IO) { appDb.readNoteDao.update(note) }
 
     fun addBookmarksForSelected() = viewModelScope.launch(Dispatchers.IO) {
         val book = bookState.value ?: return@launch

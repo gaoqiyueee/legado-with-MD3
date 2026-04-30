@@ -4,7 +4,8 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.ui.config.prefDelegate
 
 object MainConfig {
-    var showDiscovery by prefDelegate(PreferKey.showDiscovery, true)
+    var showDiscovery by prefDelegate(PreferKey.showDiscovery, false)
+    var showBookSource by prefDelegate(PreferKey.showBookSource, false)
     var showRSS by prefDelegate(PreferKey.showRss, true)
     var showBottomView by prefDelegate(PreferKey.showBottomView, true)
     var useFloatingBottomBar by prefDelegate(PreferKey.useFloatingBottomBar, false)

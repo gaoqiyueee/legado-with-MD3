@@ -283,6 +283,14 @@
             android:name=".ui.book.bookmark.AllBookmarkActivity"
             android:enableOnBackInvokedCallback="true"
             android:launchMode="singleTop" />
+        <activity
+            android:name=".ui.book.note.AllNoteActivity"
+            android:enableOnBackInvokedCallback="true"
+            android:launchMode="singleTop" />
+        <activity
+            android:name=".ui.book.annotation.AllAnnotationActivity"
+            android:enableOnBackInvokedCallback="true"
+            android:launchMode="singleTop" />
         <!-- WebView界面 -->
         <activity
             android:name=".ui.browser.WebViewActivity"

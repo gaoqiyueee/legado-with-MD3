@@ -39,6 +39,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.IntentData
 import io.legado.app.help.TTS
 import io.legado.app.help.book.BookHelp
@@ -403,6 +404,13 @@ class ReadBookActivity : BaseReadBookActivity(),
         ReadBook.readStartTime = System.currentTimeMillis()
         ReadBook.initReadTime()
         ReadBook.startAutoSaveSession()
+        if (!BuildConfig.DEBUG && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                kotlin.runCatching { AppWebDav.downloadReadRecords() }
+                kotlin.runCatching { AppWebDav.downloadNotes() }
+            }
+        }
         if (bookChanged) {
             bookChanged = false
             ReadBook.callBack = this
@@ -414,6 +422,10 @@ class ReadBookActivity : BaseReadBookActivity(),
                 ReadBook.setProgress(it)
                 ReadBook.webBookProgress = null
             }
+            // 每次重新进入阅读界面时同步阅读进度（云端比本地新则询问是否采用）
+            if (!BuildConfig.DEBUG && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
+                ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
+            }
         }
         upSystemUiVisibility()
         registerReceiver(timeBatteryReceiver, timeBatteryReceiver.filter)
@@ -423,8 +435,15 @@ class ReadBookActivity : BaseReadBookActivity(),
         networkChangedListener.register()
         networkChangedListener.onNetworkChanged = {
             // 当网络是可用状态且无需初始化时同步进度（初始化中已有同步进度逻辑）
-            if (AppConfig.syncBookProgressPlus && NetworkUtils.isAvailable() && !justInitData) {
-                ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
+            if (NetworkUtils.isAvailable() && !justInitData) {
+                if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
+                    ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                        kotlin.runCatching { AppWebDav.downloadReadRecords() }
+                        kotlin.runCatching { AppWebDav.downloadNotes() }
+                    }
+                }
             }
         }
     }
@@ -435,7 +454,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         backupJob?.cancel()
         ReadBook.saveRead()
         ReadBook.stopAutoSaveSession()
-        ReadBook.commitReadSession()
+        ReadBook.upReadTime()
         ReadBook.cancelPreDownloadTask()
         unregisterReceiver(timeBatteryReceiver)
         upSystemUiVisibility()
@@ -444,6 +463,15 @@ class ReadBookActivity : BaseReadBookActivity(),
                 ReadBook.syncProgress()
             } else {
                 ReadBook.uploadProgress()
+            }
+            if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    // 先确保 session 提交完毕，再上传（避免 race condition）
+                    kotlin.runCatching { ReadBook.commitReadSessionSuspend() }
+                    kotlin.runCatching { AppWebDav.uploadBookmarks() }
+                    kotlin.runCatching { AppWebDav.uploadReadRecords() }
+                    kotlin.runCatching { AppWebDav.uploadNotes() }
+                }
             }
             Backup.autoBack(this)
         }
@@ -1167,6 +1195,12 @@ class ReadBookActivity : BaseReadBookActivity(),
             ReadBook.readAloud()
         }
         loadStates = true
+        // 首次加载完成后同步阅读进度（bookChanged=true时onResume不同步，等内容ready后才有book对象）
+        if (justInitData && !BuildConfig.DEBUG &&
+            (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)
+        ) {
+            ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
+        }
     }
 
     /**

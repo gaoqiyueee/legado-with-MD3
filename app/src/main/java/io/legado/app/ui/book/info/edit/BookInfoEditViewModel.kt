@@ -9,6 +9,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.isAudio
@@ -22,6 +23,8 @@ import io.legado.app.utils.inputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import java.io.File
 import java.io.FileOutputStream
 
@@ -37,10 +40,11 @@ data class BookInfoEditUiState(
     val book: Book? = null,
 )
 
-class BookInfoEditViewModel(application: Application) : BaseViewModel(application) {
+class BookInfoEditViewModel(application: Application) : BaseViewModel(application), KoinComponent {
     var book: Book? = null
     private val _uiState = MutableStateFlow(BookInfoEditUiState())
     val uiState: StateFlow<BookInfoEditUiState> = _uiState.asStateFlow()
+    private val readRecordRepository: ReadRecordRepository by inject()
 
     fun loadBook(bookUrl: String) {
         execute {
@@ -122,6 +126,13 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                     ReadBook.book = book
                 }
                 appDb.bookDao.update(book)
+
+                // 如果书名或作者变更，级联更新关联表
+                val nameChanged = oldBook.name != book.name
+                val authorChanged = oldBook.author != book.author
+                if (nameChanged || authorChanged) {
+                    cascadeUpdateBookInfo(oldBook.name, oldBook.author, book.name, book.author)
+                }
             }
         }.onSuccess {
             onSuccess.invoke()
@@ -132,6 +143,24 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                 AppLog.put("书籍信息保存失败\n$it", it, true)
             }
         }
+    }
+
+    /**
+     * 将书名/作者变更级联同步到书签、阅读记录等关联表。
+     * 以 bookUrl 为真实书籍标识，name/author 只是展示字段。
+     */
+    private suspend fun cascadeUpdateBookInfo(
+        oldName: String, oldAuthor: String,
+        newName: String, newAuthor: String
+    ) {
+        // 1. 更新书签
+        val bookmarks = appDb.bookmarkDao.getByBook(oldName, oldAuthor)
+        bookmarks.forEach { bm ->
+            appDb.bookmarkDao.update(bm.copy(bookName = newName, bookAuthor = newAuthor))
+        }
+
+        // 2. 更新阅读记录（readRecord、readRecordDetail、readRecordSession 全部迁移）
+        readRecordRepository.renameAndMergeReadRecord(oldName, oldAuthor, newName, newAuthor)
     }
 
     fun coverChangeTo(context: Context, uri: Uri) {

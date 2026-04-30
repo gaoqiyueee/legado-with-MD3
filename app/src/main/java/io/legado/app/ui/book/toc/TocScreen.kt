@@ -20,12 +20,15 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,6 +93,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadNote
 import io.legado.app.help.book.isLocal
 import io.legado.app.ui.book.toc.rule.TxtTocRuleActivity
 import io.legado.app.ui.replace.ReplaceEditRoute
@@ -103,6 +107,7 @@ import io.legado.app.ui.widget.components.EmptyMessage
 import io.legado.app.ui.widget.components.SelectionBottomBar
 import io.legado.app.ui.widget.components.bookmark.BookmarkEditSheet
 import io.legado.app.ui.widget.components.bookmark.BookmarkItem
+import io.legado.app.ui.widget.components.bookmark.NoteEditSheet
 import io.legado.app.ui.widget.components.button.SmallOutlinedIconToggleButton
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.card.TextCard
@@ -157,6 +162,7 @@ fun TocScreen(
     val focusRequester = remember { FocusRequester() }
 
     var editingBookmark by remember { mutableStateOf<Bookmark?>(null) }
+    var editingNote by remember { mutableStateOf<ReadNote?>(null) }
 
     val useReplace = viewModel.useReplace
     val showWordCount = viewModel.showWordCount
@@ -171,7 +177,7 @@ fun TocScreen(
                 book?.durChapterTitle?.takeIf { it.isNotBlank() } ?: (book?.name ?: "")
             }
 
-            1 -> "书签管理"
+            1 -> "书签/笔记"
             else -> book?.name ?: ""
         }
     }
@@ -455,7 +461,7 @@ fun TocScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         AppTabRow(
-                            tabTitles = listOf("目录", "书签"),
+                            tabTitles = listOf("目录", "书签/笔记"),
                             selectedTabIndex = pagerState.currentPage,
                             onTabSelected = { index ->
                                 scope.launch {
@@ -596,11 +602,16 @@ fun TocScreen(
                         )
                     )
 
-                    1 -> BookmarkListContent(
+                    1 -> AnnotationListContent(
                         viewModel = viewModel,
-                        onBookmarkLongClick = onBookmarkClick,
+                        onAnnotationLongClick = { chapterIndex, chapterPos ->
+                            onBookmarkClick(chapterIndex, chapterPos)
+                        },
                         onBookmarkClick = { bookmark ->
                             editingBookmark = bookmark
+                        },
+                        onNoteClick = { note ->
+                            editingNote = note
                         },
                         contentPadding = adaptiveContentPaddingOnlyVertical(
                             top = padding.calculateTopPadding(),
@@ -650,6 +661,21 @@ fun TocScreen(
             onDelete = { bookmarkToDelete ->
                 viewModel.deleteBookmark(bookmarkToDelete)
                 editingBookmark = null
+            }
+        )
+
+        val noteForSheet = editingNote ?: remember(editingNote == null) { ReadNote() }
+        NoteEditSheet(
+            show = editingNote != null,
+            note = noteForSheet,
+            onDismiss = { editingNote = null },
+            onSave = { updatedNote ->
+                viewModel.updateNote(updatedNote)
+                editingNote = null
+            },
+            onDelete = { noteToDelete ->
+                viewModel.deleteNote(noteToDelete)
+                editingNote = null
             }
         )
     }
@@ -891,6 +917,151 @@ fun BookmarkListContent(
                     onLongClick = {
                         onBookmarkLongClick(bookmark.chapterIndex, bookmark.chapterPos)
                     }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 书签/笔记合并列表，按章节位置排序显示
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AnnotationListContent(
+    viewModel: TocViewModel,
+    onAnnotationLongClick: (chapterIndex: Int, chapterPos: Int) -> Unit,
+    onBookmarkClick: (Bookmark) -> Unit,
+    onNoteClick: (ReadNote) -> Unit,
+    contentPadding: PaddingValues
+) {
+    val annotations by viewModel.annotationList.collectAsStateWithLifecycle()
+    val book by viewModel.bookState.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(annotations, book?.durChapterIndex) {
+        if (annotations.isNotEmpty() && book != null) {
+            val durIndex = book!!.durChapterIndex
+            var scrollPos = 0
+            for ((index, item) in annotations.withIndex()) {
+                if (item.chapterIndex >= durIndex) break
+                scrollPos = index
+            }
+            listState.scrollToItem(scrollPos)
+        }
+    }
+
+    if (annotations.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    top = contentPadding.calculateTopPadding(),
+                    bottom = contentPadding.calculateBottomPadding()
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            EmptyMessage(message = "暂无书签或笔记")
+        }
+    } else {
+        FastScrollLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = contentPadding
+        ) {
+            items(
+                items = annotations,
+                key = { it.id }
+            ) { item ->
+                if (item.isNote) {
+                    NoteItem(
+                        note = item.rawNote!!,
+                        modifier = Modifier
+                            .animateItem()
+                            .fillMaxWidth(),
+                        isDur = item.isDur,
+                        onClick = { onNoteClick(item.rawNote) },
+                        onLongClick = { onAnnotationLongClick(item.chapterIndex, item.chapterPos) }
+                    )
+                } else {
+                    BookmarkItem(
+                        bookmark = item.rawBookmark!!,
+                        modifier = Modifier
+                            .animateItem()
+                            .fillMaxWidth(),
+                        isDur = item.isDur,
+                        onClick = { onBookmarkClick(item.rawBookmark) },
+                        onLongClick = { onAnnotationLongClick(item.chapterIndex, item.chapterPos) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun NoteItem(
+    modifier: Modifier = Modifier,
+    note: ReadNote,
+    isDur: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isDur) LegadoTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+        else Color.Transparent,
+        label = "NoteBgColor"
+    )
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        color = backgroundColor
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .adaptiveHorizontalPadding(vertical = 12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                    contentDescription = "笔记",
+                    modifier = Modifier.size(14.dp),
+                    tint = LegadoTheme.colorScheme.primary.copy(alpha = 0.8f)
+                )
+                AppText(
+                    text = note.chapterName,
+                    style = LegadoTheme.typography.titleSmallEmphasized,
+                    color = if (isDur) LegadoTheme.colorScheme.primary else LegadoTheme.colorScheme.onSurface
+                )
+            }
+
+            if (note.selectedText.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                AppText(
+                    text = note.selectedText,
+                    style = LegadoTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (note.noteContent.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                AppText(
+                    text = note.noteContent,
+                    style = LegadoTheme.typography.bodyMedium,
+                    color = LegadoTheme.colorScheme.primary
                 )
             }
         }

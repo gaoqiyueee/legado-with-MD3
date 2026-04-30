@@ -22,6 +22,8 @@ import androidx.core.view.size
 import io.legado.app.R
 import io.legado.app.base.VMBaseActivity
 import io.legado.app.constant.AppConst
+import io.legado.app.data.appDb
+import io.legado.app.data.entities.Bookmark
 import io.legado.app.databinding.ActivityWebViewBinding
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.http.CookieStore
@@ -29,7 +31,6 @@ import io.legado.app.help.source.SourceVerificationHelp
 import io.legado.app.lib.dialogs.SelectItem
 import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.dialogs.selector
-//import io.legado.app.lib.theme.accentColor
 import io.legado.app.model.Download
 import io.legado.app.ui.association.OnLineImportActivity
 import io.legado.app.utils.gone
@@ -43,6 +44,9 @@ import io.legado.app.utils.startActivity
 import io.legado.app.utils.toggleSystemBar
 import io.legado.app.utils.viewbindingdelegate.viewBinding
 import io.legado.app.utils.visible
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import io.legado.app.help.http.CookieManager as AppCookieManager
 
@@ -170,6 +174,24 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
             }
         }
         AppCookieManager.applyToWebView(url)
+        binding.webView.onBookmarkSelected = { selectedText ->
+            val pageTitle = binding.webView.title ?: ""
+            val pageUrl = binding.webView.url ?: ""
+            GlobalScope.launch(Dispatchers.IO) {
+                appDb.bookmarkDao.insert(
+                    Bookmark(
+                        bookName = pageTitle,
+                        bookAuthor = pageUrl,
+                        chapterIndex = 0,
+                        chapterPos = 0,
+                        chapterName = pageUrl,
+                        bookText = selectedText,
+                        content = ""
+                    )
+                )
+            }
+            binding.root.longSnackbar("书签已添加")
+        }
         binding.webView.setOnLongClickListener {
             val hitTestResult = binding.webView.hitTestResult
             if (hitTestResult.type == WebView.HitTestResult.IMAGE_TYPE ||
@@ -261,6 +283,7 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
+            binding.webView.injectSelectionBridge()
             val cookieManager = CookieManager.getInstance()
             url?.let {
                 CookieStore.setCookie(it, cookieManager.getCookie(it))

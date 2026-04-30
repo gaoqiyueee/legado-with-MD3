@@ -59,13 +59,33 @@ interface BookmarkDao {
     """)
     fun flowSearchAll(query: String): Flow<List<Bookmark>>
 
+    @Query(
+        """select * from bookmarks
+        where bookName = :bookName and bookAuthor = :bookAuthor
+        and chapterIndex = :chapterIndex
+        order by chapterPos"""
+    )
+    fun getByChapter(bookName: String, bookAuthor: String, chapterIndex: Int): List<Bookmark>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(vararg bookmark: Bookmark)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertIfNotExists(vararg bookmark: Bookmark)
 
     @Update
     fun update(bookmark: Bookmark)
 
     @Delete
     fun delete(vararg bookmark: Bookmark)
+
+    @Query("DELETE FROM bookmarks WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
+    fun deleteByBook(bookName: String, bookAuthor: String)
+
+    @Query("SELECT DISTINCT bookName FROM bookmarks WHERE bookName = :bookName AND bookAuthor != :excludeAuthor")
+    fun getOtherAuthorsByName(bookName: String, excludeAuthor: String): List<String>
+
+    @Query("SELECT DISTINCT bookAuthor FROM bookmarks WHERE bookName = :bookName AND bookAuthor != :excludeAuthor")
+    fun getMergeCandidateAuthors(bookName: String, excludeAuthor: String): List<String>
 
 }

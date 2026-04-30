@@ -69,6 +69,7 @@ import io.legado.app.R
 import io.legado.app.constant.BookType
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isLocal
 import io.legado.app.ui.about.AppLogSheet
 import io.legado.app.ui.config.coverConfig.CoverConfig
@@ -527,6 +528,12 @@ private fun BookInfoOverflowMenu(
                 text = stringResource(R.string.upload_to_remote),
                 onClick = { onMenuAction(BookInfoMenuAction.Upload) }
             )
+            if (book.getRemoteUrl() != null) {
+                RoundDropdownMenuItem(
+                    text = "归档（删除本地文件）",
+                    onClick = { onMenuAction(BookInfoMenuAction.Archive) }
+                )
+            }
         }
         if (!state.bookSource?.loginUrl.isNullOrBlank()) {
             RoundDropdownMenuItem(

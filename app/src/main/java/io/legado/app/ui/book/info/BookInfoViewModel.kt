@@ -9,6 +9,7 @@ import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.AppPattern
+import io.legado.app.constant.BookStorageState
 import io.legado.app.constant.BookType
 import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
@@ -26,6 +27,7 @@ import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.getExportFileName
+import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.book.isSameNameAuthor
@@ -371,6 +373,16 @@ class BookInfoViewModel(
         execute {
             setBusy(true)
             val newBook = remoteBookRepository.syncBookFromRemote(book)
+            // syncBookFromRemote 只复制了进度/分组，需手动迁移用户数据：
+            // name/author：用户可能手动改过，优先级最高，不能被 EPUB 元数据覆盖
+            // origin：保留 webDavTag 前缀，否则同步后归档/再次同步功能失效
+            // customCoverUrl/customIntro/remark：用户自定义内容
+            newBook.name = book.name
+            newBook.author = book.author
+            newBook.origin = book.origin
+            newBook.customCoverUrl = book.customCoverUrl
+            newBook.customIntro = book.customIntro
+            newBook.remark = book.remark
             appDb.bookDao.delete(book)
             appDb.bookDao.insert(newBook)
             newBook
@@ -399,6 +411,46 @@ class BookInfoViewModel(
             setBusy(false)
         }.onError {
             context.toastOnUi(it.localizedMessage)
+        }
+    }
+
+    fun archiveBook() {
+        val book = currentBook ?: return
+        execute {
+            setBusy(true)
+            val remoteUrl = book.getRemoteUrl()
+                ?: throw Exception("此书未备份到 WebDAV，无法归档")
+            // 创建与扫描云端书籍完全相同格式的 METADATA_ONLY 条目
+            val cloudBook = Book(
+                bookUrl = remoteUrl,
+                origin = book.origin,
+                originName = book.originName,
+                name = book.name,
+                author = book.author,
+                coverUrl = book.coverUrl,
+                customCoverUrl = book.customCoverUrl,
+                intro = book.intro,
+                customIntro = book.customIntro,
+                remark = book.remark,
+                group = book.group,
+                order = book.order,
+                type = BookType.text,
+                storageState = BookStorageState.METADATA_ONLY,
+                durChapterIndex = book.durChapterIndex,
+                durChapterPos = book.durChapterPos,
+                durChapterTime = book.durChapterTime,
+                durChapterTitle = book.durChapterTitle,
+            )
+            appDb.bookDao.insert(cloudBook)
+            LocalBook.deleteBook(book, deleteOriginal = true)
+            appDb.bookDao.delete(book)
+        }.onSuccess {
+            context.toastOnUi("已归档，本地文件已删除")
+            emitEffect(BookInfoEffect.Finish())
+        }.onFinally {
+            setBusy(false)
+        }.onError {
+            context.toastOnUi(it.localizedMessage ?: "归档失败")
         }
     }
 
@@ -990,6 +1042,7 @@ class BookInfoViewModel(
             )
 
             BookInfoMenuAction.ShowLog -> showAppLog()
+            BookInfoMenuAction.Archive -> archiveBook()
         }
     }
 

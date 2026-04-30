@@ -1,6 +1,7 @@
 package io.legado.app.ui.book.read.page.entities.column
 
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Build
 import androidx.annotation.Keep
 import io.legado.app.help.config.ReadBookConfig
@@ -40,8 +41,42 @@ data class TextColumn(
             }
             field = value
         }
+    override var isBookmark: Boolean = false
+        set(value) {
+            if (field != value) {
+                textLine.invalidate()
+                if (value) {
+                    textLine.bookmarkColumnCount++
+                } else {
+                    textLine.bookmarkColumnCount--
+                }
+            }
+            field = value
+        }
+
+    override var highlightColor: Int? = null
+        set(value) {
+            if (field != value) {
+                textLine.invalidate()
+                if (value != null) {
+                    textLine.highlightColumnCount++
+                } else {
+                    textLine.highlightColumnCount--
+                }
+            }
+            field = value
+        }
 
     override fun draw(view: ContentTextView, canvas: Canvas) {
+        // 绘制高亮背景（笔记划线）
+        highlightColor?.let { color ->
+            val highlightPaint = Paint().apply {
+                this.color = color
+                this.alpha = 80  // 半透明
+                style = Paint.Style.FILL
+            }
+            canvas.drawRect(start, 0f, end, textLine.height, highlightPaint)
+        }
         val textPaint = if (textLine.isTitle) {
             ChapterProvider.titlePaint
         } else {

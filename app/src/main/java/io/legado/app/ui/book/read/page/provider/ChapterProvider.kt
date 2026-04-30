@@ -56,6 +56,15 @@ object ChapterProvider {
         }
     }
 
+    val bookmarkPaint: Paint by lazy {
+        Paint().apply {
+            color = android.graphics.Color.parseColor("#FFA500") // 橙色书签下划线
+            isAntiAlias = true
+            strokeWidth = 3f
+            style = Paint.Style.STROKE
+        }
+    }
+
     var dashEffect = DashPathEffect(floatArrayOf(dottedBase, dottedRatio), 0f)
 
     @JvmStatic

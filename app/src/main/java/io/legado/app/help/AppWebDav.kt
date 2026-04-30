@@ -7,6 +7,9 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookProgress
+import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadNote
+import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.storage.Backup
@@ -27,6 +30,7 @@ import io.legado.app.utils.getPrefString
 import io.legado.app.utils.isJson
 import io.legado.app.utils.normalizeFileName
 import io.legado.app.utils.toastOnUi
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
@@ -42,6 +46,9 @@ object AppWebDav {
     private val bookProgressUrl get() = "${rootWebDavUrl}bookProgress/"
     private val exportsWebDavUrl get() = "${rootWebDavUrl}books/"
     private val bgWebDavUrl get() = "${rootWebDavUrl}background/"
+    private val notesWebDavUrl get() = "${rootWebDavUrl}readNotes/"
+    private val bookmarksWebDavUrl get() = "${rootWebDavUrl}bookmarks/"
+    private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
 
     var authorization: Authorization? = null
         private set
@@ -84,6 +91,9 @@ object AppWebDav {
                 WebDav(bookProgressUrl, mAuthorization).makeAsDir()
                 WebDav(exportsWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(bgWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(notesWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(bookmarksWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(readRecordsWebDavUrl, mAuthorization).makeAsDir()
                 val rootBooksUrl = "${rootWebDavUrl}books/"
                 defaultBookWebDav = RemoteBookWebDav(rootBooksUrl, mAuthorization)
                 authorization = mAuthorization
@@ -355,10 +365,10 @@ object AppWebDav {
         appDb.bookDao.all.forEach { book ->
             val progressFileName = getProgressFileName(book.name, book.author)
             val webDavFile = map[progressFileName]
-            webDavFile ?: return
+            webDavFile ?: return@forEach  // 修复: 此前 bare return 会退出整个函数
             if (webDavFile.lastModify <= book.syncTime) {
                 //本地同步时间大于上传时间不用同步
-                return
+                return@forEach
             }
             getBookProgress(book)?.let { bookProgress ->
                 if (bookProgress.durChapterIndex > book.durChapterIndex
@@ -373,6 +383,210 @@ object AppWebDav {
                     appDb.bookDao.update(book)
                 }
             }
+        }
+    }
+
+    /**
+     * 上传所有笔记到 WebDAV
+     */
+    suspend fun uploadNotes() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val notes = appDb.readNoteDao.all
+            if (notes.isEmpty()) return
+            val json = GSON.toJson(notes)
+            WebDav(notesWebDavUrl, authorization).makeAsDir()
+            WebDav("${notesWebDavUrl}notes.json", authorization).upload(
+                json.toByteArray(),
+                "application/json"
+            )
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传笔记失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载笔记并合并到本地
+     */
+    suspend fun downloadNotes() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val byteArray = WebDav("${notesWebDavUrl}notes.json", authorization).download()
+            val json = String(byteArray)
+            if (!json.isJson()) return
+            val remoteNotes = GSON.fromJsonObject<List<ReadNote>>(json).getOrNull() ?: return
+            if (remoteNotes.isNotEmpty()) {
+                appDb.readNoteDao.insertAll(remoteNotes)
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("下载笔记失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 上传书签到 WebDAV
+     * 上传前先合并云端书签（保证不丢失其他设备新增的书签），再全量上传
+     */
+    suspend fun uploadBookmarks() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val localBookKeys = appDb.bookDao.all
+                .map { it.name to it.author }.toSet()
+            // 先把云端书签合并到本地（增量，不覆盖），避免上传时丢失其他设备的书签
+            kotlin.runCatching {
+                val byteArray = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).download()
+                val json = String(byteArray)
+                if (json.isJson()) {
+                    val type = object : TypeToken<List<Bookmark>>() {}.type
+                    val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: emptyList()
+                    val toInsert = remoteBookmarks
+                        .filter { (it.bookName to it.bookAuthor) in localBookKeys }
+                        .toTypedArray()
+                    if (toInsert.isNotEmpty()) {
+                        appDb.bookmarkDao.insertIfNotExists(*toInsert)
+                    }
+                }
+            }
+            // 上传合并后的本地书签（全量覆盖云端）
+            val bookmarks = appDb.bookmarkDao.all
+                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
+            if (bookmarks.isEmpty()) return
+            val json = GSON.toJson(bookmarks)
+            WebDav(bookmarksWebDavUrl, authorization).makeAsDir()
+            WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).upload(
+                json.toByteArray(),
+                "application/json"
+            )
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传书签失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载书签并合并到本地
+     * 只导入书架中已有书籍的书签，避免引入无关数据
+     */
+    suspend fun downloadBookmarks() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val byteArray = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).download()
+            val json = String(byteArray)
+            if (!json.isJson()) return
+            val type = object : TypeToken<List<Bookmark>>() {}.type
+            val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: return
+            if (remoteBookmarks.isEmpty()) return
+            val localBookKeys = appDb.bookDao.all
+                .map { it.name to it.author }.toSet()
+            val toInsert = remoteBookmarks
+                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
+                .toTypedArray()
+            if (toInsert.isNotEmpty()) {
+                appDb.bookmarkDao.insertIfNotExists(*toInsert)
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("下载书签失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 上传阅读时长记录到 WebDAV
+     * 上传前先合并云端记录（取 readTime 最大值），再全量上传，避免覆盖其他设备的时长
+     */
+    suspend fun uploadReadRecords() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val localBookKeys = appDb.bookDao.all
+                .map { it.name to it.author }.toSet()
+            // 先把云端记录合并到本地（取较大值）
+            kotlin.runCatching {
+                val byteArray = WebDav("${readRecordsWebDavUrl}records.json", authorization).download()
+                val json = String(byteArray)
+                if (json.isJson()) {
+                    val type = object : TypeToken<List<ReadRecord>>() {}.type
+                    val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: emptyList()
+                    val localRecords = appDb.readRecordDao.all
+                        .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
+                    remoteRecords.forEach { remote ->
+                        if ((remote.bookName to remote.bookAuthor) !in localBookKeys) return@forEach
+                        val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
+                        val local = localRecords[key]
+                        if (local == null) {
+                            appDb.readRecordDao.insert(remote)
+                        } else if (remote.readTime > local.readTime) {
+                            appDb.readRecordDao.insert(
+                                local.copy(
+                                    readTime = remote.readTime,
+                                    lastRead = maxOf(local.lastRead, remote.lastRead)
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            // 上传合并后的本地记录
+            val records = appDb.readRecordDao.all
+                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
+            if (records.isEmpty()) return
+            val json = GSON.toJson(records)
+            WebDav(readRecordsWebDavUrl, authorization).makeAsDir()
+            WebDav("${readRecordsWebDavUrl}records.json", authorization).upload(
+                json.toByteArray(),
+                "application/json"
+            )
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传阅读记录失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载阅读时长记录并合并到本地
+     * 若云端 readTime 大于本地，将差值累加到本地（避免重复计算已同步的时长）
+     */
+    suspend fun downloadReadRecords() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val byteArray = WebDav("${readRecordsWebDavUrl}records.json", authorization).download()
+            val json = String(byteArray)
+            if (!json.isJson()) return
+            val type = object : TypeToken<List<ReadRecord>>() {}.type
+            val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: return
+            if (remoteRecords.isEmpty()) return
+            val localBookKeys = appDb.bookDao.all
+                .map { it.name to it.author }.toSet()
+            val localRecords = appDb.readRecordDao.all
+                .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
+                .toMutableMap()
+            remoteRecords.forEach { remote ->
+                if ((remote.bookName to remote.bookAuthor) !in localBookKeys) return@forEach
+                val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
+                val local = localRecords[key]
+                if (local == null) {
+                    appDb.readRecordDao.insert(remote)
+                } else if (remote.readTime > local.readTime) {
+                    // 云端比本地多出来的时间是"其他设备新增的"，累加而非覆盖
+                    val delta = remote.readTime - local.readTime
+                    appDb.readRecordDao.insert(
+                        local.copy(
+                            readTime = local.readTime + delta,
+                            lastRead = maxOf(local.lastRead, remote.lastRead)
+                        )
+                    )
+                }
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("下载阅读记录失败\n${it.localizedMessage}", it)
         }
     }
 

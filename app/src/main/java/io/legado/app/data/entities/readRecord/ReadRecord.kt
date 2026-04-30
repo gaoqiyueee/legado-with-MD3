@@ -12,5 +12,8 @@ data class ReadRecord(
     @ColumnInfo(defaultValue = "0")
     var readTime: Long = 0L,
     @ColumnInfo(defaultValue = "0")
-    var lastRead: Long = System.currentTimeMillis()
+    var lastRead: Long = System.currentTimeMillis(),
+    /** 书籍的稳定唯一标识，对应 Book.bookUrl，不随书名/作者修改而变化 */
+    @ColumnInfo(defaultValue = "")
+    var bookUrl: String = ""
 )

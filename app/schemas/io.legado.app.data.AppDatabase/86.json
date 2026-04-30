@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 85,
-    "identityHash": "df80a16688a3b8ac344e25b945706d1b",
+    "version": 86,
+    "identityHash": "e8547dbf140b2f2ea5dc7b2552968841",
     "entities": [
       {
         "tableName": "books",
@@ -1496,7 +1496,7 @@
       },
       {
         "tableName": "readRecordSession",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `deviceId` TEXT NOT NULL, `bookName` TEXT NOT NULL, `bookAuthor` TEXT NOT NULL DEFAULT '', `startTime` INTEGER NOT NULL, `endTime` INTEGER NOT NULL, `words` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `deviceId` TEXT NOT NULL, `bookName` TEXT NOT NULL, `bookAuthor` TEXT NOT NULL DEFAULT '', `startTime` INTEGER NOT NULL, `endTime` INTEGER NOT NULL, `words` INTEGER NOT NULL, `bookUrl` TEXT NOT NULL DEFAULT '')",
         "fields": [
           {
             "fieldPath": "id",
@@ -1540,6 +1540,13 @@
             "columnName": "words",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "bookUrl",
+            "columnName": "bookUrl",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
           }
         ],
         "primaryKey": {
@@ -1687,7 +1694,7 @@
       },
       {
         "tableName": "readRecord",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`deviceId` TEXT NOT NULL, `bookName` TEXT NOT NULL, `bookAuthor` TEXT NOT NULL DEFAULT '', `readTime` INTEGER NOT NULL DEFAULT 0, `lastRead` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`deviceId`, `bookName`, `bookAuthor`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`deviceId` TEXT NOT NULL, `bookName` TEXT NOT NULL, `bookAuthor` TEXT NOT NULL DEFAULT '', `readTime` INTEGER NOT NULL DEFAULT 0, `lastRead` INTEGER NOT NULL DEFAULT 0, `bookUrl` TEXT NOT NULL DEFAULT '', PRIMARY KEY(`deviceId`, `bookName`, `bookAuthor`))",
         "fields": [
           {
             "fieldPath": "deviceId",
@@ -1721,6 +1728,13 @@
             "affinity": "INTEGER",
             "notNull": true,
             "defaultValue": "0"
+          },
+          {
+            "fieldPath": "bookUrl",
+            "columnName": "bookUrl",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
           }
         ],
         "primaryKey": {
@@ -2211,7 +2225,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'df80a16688a3b8ac344e25b945706d1b')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e8547dbf140b2f2ea5dc7b2552968841')"
     ]
   }
 }

@@ -10,6 +10,7 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import io.legado.app.constant.AppPattern
 import io.legado.app.constant.BookType
+import io.legado.app.constant.BookStorageState
 import io.legado.app.constant.PageAnim
 import io.legado.app.data.appDb
 import io.legado.app.help.book.BookHelp
@@ -118,7 +119,10 @@ data class Book(
     var readConfig: ReadConfig? = null,
     //同步时间
     @ColumnInfo(defaultValue = "0")
-    var syncTime: Long = 0L
+    var syncTime: Long = 0L,
+    // 本地存储状态：0=LOCAL（本地文件存在），1=METADATA_ONLY（仅元信息），2=ARCHIVED（归档，文件已删除）
+    @ColumnInfo(defaultValue = "0")
+    var storageState: Int = 0
 ) : Parcelable, BaseBook {
 
     @delegate:Transient

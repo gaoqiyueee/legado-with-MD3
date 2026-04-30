@@ -22,7 +22,17 @@ class AssetsWeb(rootPath: String) {
     fun getResponse(path: String): NanoHTTPD.Response {
         var path1 = path
         path1 = (rootPath + path1).replace("/+".toRegex(), File.separator)
-        val inputStream = assetManager.open(path1)
+        // 如果文件不存在且没有扩展名，说明是 Vue history 模式的前端路由（如 /chapter），
+        // 回退到 vue/index.html 让前端路由自行处理
+        val inputStream = try {
+            assetManager.open(path1)
+        } catch (e: IOException) {
+            if (!path1.contains(".")) {
+                assetManager.open("$rootPath${File.separator}vue${File.separator}index.html")
+            } else {
+                throw e
+            }
+        }
         return NanoHTTPD.newChunkedResponse(
             NanoHTTPD.Response.Status.OK,
             getMimeType(path1),

@@ -6,13 +6,14 @@ import android.view.ViewGroup
 import androidx.lifecycle.lifecycleScope
 import io.legado.app.R
 import io.legado.app.base.BaseBottomSheetDialogFragment
+import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.databinding.DialogBookmarkBinding
-//import io.legado.app.lib.theme.primaryColor
 import io.legado.app.utils.setLayout
 import io.legado.app.utils.viewbindingdelegate.viewBinding
 import io.legado.app.utils.visible
+import io.legado.app.utils.eventBus.FlowEventBus
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,6 +66,7 @@ class BookmarkDialog() : BaseBottomSheetDialogFragment(R.layout.dialog_bookmark)
                     withContext(IO) {
                         appDb.bookmarkDao.insert(bookmark)
                     }
+                    FlowEventBus.post(EventBus.BOOKMARK_SAVED, bookmark)
                     dismiss()
                 }
             }
@@ -74,6 +76,7 @@ class BookmarkDialog() : BaseBottomSheetDialogFragment(R.layout.dialog_bookmark)
                     withContext(IO) {
                         appDb.bookmarkDao.delete(bookmark)
                     }
+                    FlowEventBus.post(EventBus.BOOKMARK_SAVED, bookmark)
                     dismiss()
                 }
             }

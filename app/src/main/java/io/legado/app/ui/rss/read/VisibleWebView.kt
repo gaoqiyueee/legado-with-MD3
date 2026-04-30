@@ -26,6 +26,26 @@ class VisibleWebView(
 
     private var lastSelectedText: String = ""
 
+    /** Called after each page load to inject the selection bridge. */
+    fun injectSelectionBridge() {
+        val js = """
+            (function(){
+                if(window.__selectionBridgeInjected) return;
+                window.__selectionBridgeInjected = true;
+                document.addEventListener('selectionchange', function() {
+                    var text = window.getSelection().toString();
+                    if (text) { TextSelectionBridge.onTextSelected(text); }
+                    else { TextSelectionBridge.onTextSelected(''); }
+                });
+            })();
+        """.trimIndent()
+        evaluateJavascript(js, null)
+    }
+
+    /** Set by the hosting activity/fragment to inject an extra menu item.
+     *  Receives the selected text when the item is clicked. */
+    var onBookmarkSelected: ((selectedText: String) -> Unit)? = null
+
     init {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -36,16 +56,6 @@ class VisibleWebView(
                 lastSelectedText = text
             }
         }, "TextSelectionBridge")
-
-        val js = """
-            document.addEventListener('selectionchange', function() {
-                const text = window.getSelection().toString();
-                if (text) {
-                    TextSelectionBridge.onTextSelected(text);
-                }
-            });
-        """.trimIndent()
-        evaluateJavascript(js, null)
     }
 
     override fun performClick(): Boolean {
@@ -63,8 +73,12 @@ class VisibleWebView(
     private fun createWrappedCallback(original: ActionMode.Callback?): ActionMode.Callback {
         return object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                lastSelectedText = ""   // reset so getSelectedText fetches fresh via JS
                 val result = original?.onCreateActionMode(mode, menu) ?: false
                 menu.add(Menu.NONE, MENU_ID_DICT, 0, R.string.dict)
+                if (onBookmarkSelected != null) {
+                    menu.add(Menu.NONE, MENU_ID_BOOKMARK, 1, "📌 书签")
+                }
                 getSelectedText { }
                 return result
             }
@@ -90,6 +104,16 @@ class VisibleWebView(
                         true
                     }
 
+                    MENU_ID_BOOKMARK -> {
+                        getSelectedText { selectedText ->
+                            if (selectedText.isNotBlank()) {
+                                onBookmarkSelected?.invoke(selectedText)
+                            }
+                        }
+                        mode.finish()
+                        true
+                    }
+
                     else -> original?.onActionItemClicked(mode, item) ?: false
                 }
             }
@@ -110,14 +134,10 @@ class VisibleWebView(
     }
 
     private fun getSelectedText(callback: (String) -> Unit) {
-        if (lastSelectedText.isNotBlank()) {
-            callback(lastSelectedText)
-        } else {
-            evaluateJavascript("(function(){return window.getSelection().toString();})()") { result ->
-                val selectedText = result?.removeSurrounding("\"") ?: ""
-                lastSelectedText = selectedText
-                callback(selectedText)
-            }
+        evaluateJavascript("(function(){return window.getSelection().toString();})()") { result ->
+            val selectedText = result?.removeSurrounding("\"") ?: lastSelectedText
+            if (selectedText.isNotBlank()) lastSelectedText = selectedText
+            callback(selectedText)
         }
     }
 
@@ -131,6 +151,7 @@ class VisibleWebView(
 
     companion object {
         private const val MENU_ID_DICT = 1001
+        private const val MENU_ID_BOOKMARK = 1002
     }
 }
 

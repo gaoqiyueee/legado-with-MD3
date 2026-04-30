@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.legado.app.data.dao.BookDao
 import io.legado.app.data.dao.BookmarkDao
+import io.legado.app.data.dao.ReadRecordDao
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.utils.FileDoc
 import io.legado.app.utils.GSON
@@ -46,19 +48,38 @@ data class BookmarkItemUi(
     val rawBookmark: Bookmark
 )
 
+/** 每个书籍分组的展示数据 */
+@Immutable
+data class BookmarkGroupUiData(
+    val header: BookmarkGroupHeader,
+    val bookmarkCount: Int,
+    val coverUrl: String?,
+    /** 总阅读时长，毫秒 */
+    val readTimeMs: Long,
+    /** 阅读进度 0f..1f，-1f 表示无数据 */
+    val progressFraction: Float,
+    /** 用户添加的备注（可能为空） */
+    val remark: String?,
+    val items: List<BookmarkItemUi>
+)
+
 @Immutable
 data class BookmarkUiState(
     val isLoading: Boolean = false,
-    val bookmarks: Map<BookmarkGroupHeader, List<BookmarkItemUi>> = emptyMap(),
+    val groups: List<BookmarkGroupUiData> = emptyList(),
     val error: Throwable? = null,
     val searchQuery: String = "",
     val collapsedGroups: Set<String> = emptySet()
-)
-
+) {
+    val bookmarks: Map<BookmarkGroupHeader, List<BookmarkItemUi>>
+        get() = groups.associate { it.header to it.items }
+}
 
 class AllBookmarkViewModel(
     application: Application,
-    private val bookmarkDao: BookmarkDao
+    private val bookmarkDao: BookmarkDao,
+    private val bookDao: BookDao,
+    private val readRecordDao: ReadRecordDao
 ) : AndroidViewModel(application) {
 
     private val _searchQuery = MutableStateFlow("")
@@ -71,35 +92,60 @@ class AllBookmarkViewModel(
         bookmarkDao.flowAll()
     ) { query, collapsed, allBookmarks ->
 
+        // 批量查询，避免 N+1
+        val bookMap = bookDao.all.associateBy { it.name to it.author }
+        val readRecordMap = readRecordDao.all.associateBy { it.bookName to it.bookAuthor }
+
         val filteredList = if (query.isBlank()) {
             allBookmarks
         } else {
             allBookmarks.filter {
                 it.bookName.contains(query, ignoreCase = true) ||
+                        it.bookAuthor.contains(query, ignoreCase = true) ||
+                        it.chapterName.contains(query, ignoreCase = true) ||
+                        it.bookText.contains(query, ignoreCase = true) ||
                         it.content.contains(query, ignoreCase = true) ||
-                        it.bookAuthor.contains(query, ignoreCase = true)
+                        (!bookMap[it.bookName to it.bookAuthor]?.remark.isNullOrBlank() &&
+                                bookMap[it.bookName to it.bookAuthor]!!.remark!!.contains(query, ignoreCase = true))
             }
         }
 
-        val grouped = filteredList.asSequence()
-            .map { bookmark ->
-                BookmarkItemUi(
-                    id = bookmark.time,
-                    content = bookmark.content,
-                    chapterName = bookmark.chapterName,
-                    bookText = bookmark.bookText,
-                    bookName = bookmark.bookName,
-                    bookAuthor = bookmark.bookAuthor,
-                    rawBookmark = bookmark
+        val groups = filteredList
+            .groupBy { BookmarkGroupHeader(it.bookName, it.bookAuthor) }
+            .map { (header, rawBookmarks) ->
+                val book = bookMap[header.bookName to header.bookAuthor]
+                val readRecord = readRecordMap[header.bookName to header.bookAuthor]
+
+                val progressFraction = if (book != null && book.totalChapterNum > 0) {
+                    (book.durChapterIndex.toFloat() / book.totalChapterNum).coerceIn(0f, 1f)
+                } else {
+                    -1f
+                }
+
+                BookmarkGroupUiData(
+                    header = header,
+                    bookmarkCount = rawBookmarks.size,
+                    coverUrl = book?.getDisplayCover(),
+                    readTimeMs = readRecord?.readTime ?: 0L,
+                    progressFraction = progressFraction,
+                    remark = book?.remark?.takeIf { it.isNotBlank() },
+                    items = rawBookmarks.map { bm ->
+                        BookmarkItemUi(
+                            id = bm.time,
+                            content = bm.content,
+                            chapterName = bm.chapterName,
+                            bookText = bm.bookText,
+                            bookName = bm.bookName,
+                            bookAuthor = bm.bookAuthor,
+                            rawBookmark = bm
+                        )
+                    }
                 )
-            }
-            .groupBy { item ->
-                BookmarkGroupHeader(item.bookName, item.bookAuthor)
             }
 
         BookmarkUiState(
             isLoading = false,
-            bookmarks = grouped,
+            groups = groups,
             searchQuery = query,
             collapsedGroups = collapsed
         )
@@ -145,6 +191,22 @@ class AllBookmarkViewModel(
         }
     }
 
+    suspend fun getMergeCandidates(header: BookmarkGroupHeader): List<String> {
+        return withContext(Dispatchers.IO) {
+            bookmarkDao.getMergeCandidateAuthors(header.bookName, header.bookAuthor)
+        }
+    }
+
+    fun mergeBookmarksInto(target: BookmarkGroupHeader, sourceAuthor: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sourceBookmarks = bookmarkDao.getByBook(target.bookName, sourceAuthor)
+            sourceBookmarks.forEach { bm ->
+                bookmarkDao.insert(bm.copy(bookAuthor = target.bookAuthor))
+            }
+            bookmarkDao.deleteByBook(target.bookName, sourceAuthor)
+        }
+    }
+
     fun exportBookmark(treeUri: Uri, isMarkdown: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -180,7 +242,6 @@ class AllBookmarkViewModel(
     private fun writeMarkdown(outputStream: java.io.OutputStream, bookmarks: List<Bookmark>) {
         val sb = StringBuilder()
         var lastHeader = ""
-
         bookmarks.forEach {
             val currentHeader = "${it.bookName}|${it.bookAuthor}"
             if (currentHeader != lastHeader) {

@@ -7,6 +7,7 @@ import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.EventBus
 import io.legado.app.domain.usecase.AppStartupMaintenanceUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
+import io.legado.app.help.AppWebDav
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.utils.eventBus.FlowEventBus
 import io.legado.app.utils.sendToClip
@@ -28,6 +29,8 @@ class MainViewModel(
     fun postLoad() {
         execute {
             appStartupMaintenanceUseCase.ensureDefaultHttpTts()
+            kotlin.runCatching { AppWebDav.downloadBookmarks() }
+            kotlin.runCatching { AppWebDav.downloadReadRecords() }
         }
     }
 

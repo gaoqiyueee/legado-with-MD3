@@ -6,6 +6,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.help.book.BookContent
+import io.legado.app.data.entities.ReadNote
 import io.legado.app.ui.book.read.page.provider.LayoutProgressListener
 import io.legado.app.ui.book.read.page.provider.TextChapterLayout
 import io.legado.app.utils.fastBinarySearchBy
@@ -262,6 +263,105 @@ data class TextChapter(
                 it.isSearchResult = false
             }
             page.searchResult.clear()
+        }
+    }
+
+    /**
+     * 标记书签位置，高亮选中文字的完整范围（跨行、跨页）
+     * @param bookmarks 当前章节的所有书签
+     */
+    fun markBookmarks(bookmarks: List<io.legado.app.data.entities.Bookmark>) {
+        val chapterBookmarks = bookmarks.filter { it.chapterIndex == chapter.index }
+        if (chapterBookmarks.isEmpty()) return
+
+        for (bookmark in chapterBookmarks) {
+            val startPos = bookmark.chapterPos
+            val endPos = startPos + bookmark.bookText.length.coerceAtLeast(1)
+
+            for (page in pages) {
+                for (textLine in page.lines) {
+                    val lineStart = textLine.chapterPosition
+                    val lineEnd = lineStart + textLine.charSize
+                    // 行与书签范围无交叉则跳过
+                    if (lineEnd <= startPos || lineStart >= endPos) continue
+
+                    var currentPos = lineStart
+                    for (column in textLine.columns) {
+                        if (column is io.legado.app.ui.book.read.page.entities.column.TextBaseColumn) {
+                            val colEnd = currentPos + column.charData.length
+                            if (currentPos >= startPos && currentPos < endPos) {
+                                column.isBookmark = true
+                            }
+                            currentPos += column.charData.length
+                            if (currentPos >= endPos) break
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 清除书签标记
+     */
+    fun clearBookmarks() {
+        for (i in pages.indices) {
+            val page = pages[i]
+            for (textLine in page.lines) {
+                for (column in textLine.columns) {
+                    if (column is io.legado.app.ui.book.read.page.entities.column.TextBaseColumn) {
+                        column.isBookmark = false
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 标记笔记高亮范围
+     * 对每条笔记，根据 [chapterPos, chapterPos + selectedText.length) 范围内的所有 TextColumn 标记高亮色
+     */
+    fun markNotes(notes: List<ReadNote>, highlightColor: Int = 0xFFFFEB3B.toInt()) {
+        val chapterNotes = notes.filter { it.chapterIndex == chapter.index && it.selectedText.isNotEmpty() }
+        if (chapterNotes.isEmpty()) return
+
+        for (note in chapterNotes) {
+            val startPos = note.chapterPos
+            val endPos = startPos + note.selectedText.length
+
+            for (page in pages) {
+                for (textLine in page.lines) {
+                    val lineStart = textLine.chapterPosition
+                    val lineEnd = lineStart + textLine.charSize
+                    if (lineEnd <= startPos || lineStart >= endPos) continue
+
+                    var currentPos = lineStart
+                    for (column in textLine.columns) {
+                        if (column is io.legado.app.ui.book.read.page.entities.column.TextBaseColumn) {
+                            val colEnd = currentPos + column.charData.length
+                            if (currentPos >= startPos && currentPos < endPos) {
+                                column.highlightColor = highlightColor
+                            }
+                            currentPos = colEnd
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 清除笔记高亮标记
+     */
+    fun clearNoteHighlights() {
+        for (page in pages) {
+            for (textLine in page.lines) {
+                for (column in textLine.columns) {
+                    if (column is io.legado.app.ui.book.read.page.entities.column.TextBaseColumn) {
+                        column.highlightColor = null
+                    }
+                }
+            }
         }
     }
 

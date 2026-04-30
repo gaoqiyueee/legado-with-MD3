@@ -273,7 +273,7 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
         uploadSuccessAction: (() -> Unit)? = null,
         syncSuccessAction: (() -> Unit)? = null
     ) {
-        if (!AppConfig.syncBookProgress) return
+        if (!AppConfig.syncBookProgress && !AppConfig.syncBookProgressPlus) return
         val book = book ?: return
         Coroutine.async {
             AppWebDav.getBookProgress(book)
@@ -315,6 +315,7 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
                 deviceId = "",
                 bookName = currentBookName,
                 bookAuthor = currentBookAuthor,
+                bookUrl = book?.bookUrl ?: "",
                 startTime = readStartTime,
                 endTime = readStartTime,
                 words = durChapterIndex.toLong()
@@ -333,13 +334,13 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
             currentActiveSession!!.bookAuthor != currentBookAuthor
         ) {
             initReadTime()
-            return
+            // fall through to update endTime on the freshly created session
         }
 
-        currentActiveSession = currentActiveSession!!.copy(
+        currentActiveSession = currentActiveSession?.copy(
             endTime = endTime,
             words = durChapterIndex.toLong()
-        )
+        ) ?: return
 
         readStartTime = endTime
         lastReadLength = currentLength
@@ -350,6 +351,7 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
         autoSaveJob = ioScope.launch {
             while (isActive) {
                 delay(AUTO_SAVE_INTERVAL)
+                upReadTime()
                 commitSessionInternal()
             }
         }
@@ -363,6 +365,31 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
     fun commitReadSession() {
         ioScope.launch {
             commitSessionInternal()
+        }
+    }
+
+    /** 挂起版本，可在协程中 await 完成后再继续 */
+    suspend fun commitReadSessionSuspend() {
+        commitSessionInternal()
+    }
+
+    /**
+     * 保存来自 Web 端的阅读会话（阅读时间）
+     */
+    fun saveExternalReadSession(bookName: String, bookAuthor: String, startTime: Long, endTime: Long) {
+        val duration = endTime - startTime
+        if (duration < MIN_READ_DURATION) return
+        ioScope.launch {
+            val session = ReadRecordSession(
+                deviceId = "",
+                bookName = bookName,
+                bookAuthor = bookAuthor,
+                bookUrl = book?.bookUrl?.takeIf { book?.name == bookName && book?.author == bookAuthor } ?: "",
+                startTime = startTime,
+                endTime = endTime,
+                words = 0L
+            )
+            readRecordRepository.saveReadSession(session)
         }
     }
 

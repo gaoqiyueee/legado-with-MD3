@@ -3,7 +3,12 @@ package io.legado.app.ui.book.readRecord
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -25,17 +31,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.ViewDay
+import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,10 +61,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -61,9 +77,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import cn.hutool.core.date.DateUtil
 import io.legado.app.data.entities.readRecord.ReadRecord
@@ -82,6 +100,7 @@ import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.checkBox.CheckboxItem
 import io.legado.app.ui.widget.components.cover.Cover
+import io.legado.app.ui.widget.components.cover.CoilBookCover
 import io.legado.app.ui.widget.components.heatmap.HEATMAP_CALENDAR_TITLE
 import io.legado.app.ui.widget.components.heatmap.HeatmapCalendarEndAction
 import io.legado.app.ui.widget.components.heatmap.HeatmapCalendarStartAction
@@ -115,15 +134,21 @@ import java.util.Date
 fun ReadRecordScreen(
     viewModel: ReadRecordViewModel = koinViewModel(),
     onBackClick: () -> Unit,
-    onBookClick: (String, String) -> Unit
+    onBookClick: (String, String) -> Unit,
+    contentWindowInsets: WindowInsets = ScaffoldDefaults.contentWindowInsets,
+    extraBottomPadding: Dp = 0.dp
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     val state by viewModel.uiState.collectAsState()
     val displayMode by viewModel.displayMode.collectAsState()
+    val viewPeriod by viewModel.viewPeriod.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val pullToRefreshState = rememberPullToRefreshState()
     var showSearch by remember { mutableStateOf(false) }
     var showCalendar by remember { mutableStateOf(false) }
+    var showPeriodSelector by remember { mutableStateOf(false) }
     var heatmapMode by remember { mutableStateOf(HeatmapMode.COUNT) }
     val listState = rememberLazyListState()
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
@@ -178,13 +203,19 @@ fun ReadRecordScreen(
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        contentWindowInsets = contentWindowInsets,
         topBar = {
             Column {
                 GlassMediumFlexibleTopAppBar(
                     title = "阅读记录",
                     subtitle = run {
                         val subTitle = when (displayMode) {
-                            DisplayMode.AGGREGATE -> "汇总视图"
+                            DisplayMode.AGGREGATE -> when (viewPeriod) {
+                                ViewPeriod.DAY -> "日视图"
+                                ViewPeriod.WEEK -> "周视图"
+                                ViewPeriod.MONTH -> "月视图"
+                                ViewPeriod.YEAR -> "年视图"
+                            }
                             DisplayMode.TIMELINE -> "时间线视图"
                             DisplayMode.LATEST -> "最后阅读"
                         }
@@ -194,6 +225,17 @@ fun ReadRecordScreen(
                         TopBarNavigationButton(onClick = onBackClick)
                     },
                     actions = {
+                        if (displayMode == DisplayMode.AGGREGATE) {
+                            AppIconButton(onClick = { showPeriodSelector = !showPeriodSelector }) {
+                                val icon = when (viewPeriod) {
+                                    ViewPeriod.DAY -> Icons.Default.ViewDay
+                                    ViewPeriod.WEEK -> Icons.Default.ViewWeek
+                                    ViewPeriod.MONTH -> Icons.Default.DateRange
+                                    ViewPeriod.YEAR -> Icons.Default.CalendarMonth
+                                }
+                                AppIcon(icon, contentDescription = "切换视图周期")
+                            }
+                        }
                         AppIconButton(onClick = {
                             val newMode = when (displayMode) {
                                 DisplayMode.AGGREGATE -> DisplayMode.TIMELINE
@@ -253,7 +295,7 @@ fun ReadRecordScreen(
                             .fillMaxSize()
                             .padding(
                                 top = padding.calculateTopPadding(),
-                                bottom = padding.calculateBottomPadding()
+                                bottom = padding.calculateBottomPadding() + extraBottomPadding
                             ),
                         message = "加载中",
                         isLoading = true
@@ -266,20 +308,35 @@ fun ReadRecordScreen(
                             .fillMaxSize()
                             .padding(
                                 top = padding.calculateTopPadding(),
-                                bottom = padding.calculateBottomPadding()
+                                bottom = padding.calculateBottomPadding() + extraBottomPadding
                             ),
                         message = "没有记录"
                     )
                 }
 
                 "CONTENT" -> {
+                    PullToRefreshBox(
+                        modifier = Modifier.fillMaxSize(),
+                        isRefreshing = isRefreshing,
+                        state = pullToRefreshState,
+                        onRefresh = { viewModel.syncFromWebDav() },
+                        indicator = {
+                            PullToRefreshDefaults.LoadingIndicator(
+                                state = pullToRefreshState,
+                                isRefreshing = isRefreshing,
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = padding.calculateTopPadding())
+                            )
+                        }
+                    ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = adaptiveContentPaddingOnlyVertical(
                                 top = padding.calculateTopPadding(),
-                                bottom = padding.calculateBottomPadding() + 16.dp
+                                bottom = padding.calculateBottomPadding() + extraBottomPadding + 16.dp
                             )
                         ) {
                             item(key = "summary_card") {
@@ -312,7 +369,7 @@ fun ReadRecordScreen(
                             )
                         ) { date ->
                             val text = buildString {
-                                append(formatFriendlyDate(date))
+                                append(formatViewPeriodDate(date, state.viewPeriod))
                                 if (displayMode == DisplayMode.AGGREGATE) {
                                     val dailyTotal = state.groupedRecords[date]?.sumOf { it.readTime } ?: 0L
                                     append(" · ")
@@ -330,6 +387,7 @@ fun ReadRecordScreen(
                             )
                         }
                     }
+                    } // end PullToRefreshBox
                 }
             }
         }
@@ -393,6 +451,56 @@ fun ReadRecordScreen(
                 showCalendar = false
             }
         )
+    }
+
+    AppModalBottomSheet(
+        show = showPeriodSelector,
+        onDismissRequest = { showPeriodSelector = false },
+        title = "选择视图周期"
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ViewPeriodSelectorItem(
+                title = "日视图",
+                icon = Icons.Default.ViewDay,
+                isSelected = viewPeriod == ViewPeriod.DAY,
+                onClick = {
+                    viewModel.setViewPeriod(ViewPeriod.DAY)
+                    showPeriodSelector = false
+                }
+            )
+            ViewPeriodSelectorItem(
+                title = "周视图",
+                icon = Icons.Default.ViewWeek,
+                isSelected = viewPeriod == ViewPeriod.WEEK,
+                onClick = {
+                    viewModel.setViewPeriod(ViewPeriod.WEEK)
+                    showPeriodSelector = false
+                }
+            )
+            ViewPeriodSelectorItem(
+                title = "月视图",
+                icon = Icons.Default.DateRange,
+                isSelected = viewPeriod == ViewPeriod.MONTH,
+                onClick = {
+                    viewModel.setViewPeriod(ViewPeriod.MONTH)
+                    showPeriodSelector = false
+                }
+            )
+            ViewPeriodSelectorItem(
+                title = "年视图",
+                icon = Icons.Default.CalendarMonth,
+                isSelected = viewPeriod == ViewPeriod.YEAR,
+                onClick = {
+                    viewModel.setViewPeriod(ViewPeriod.YEAR)
+                    showPeriodSelector = false
+                }
+            )
+        }
     }
 
     var selectedAuthors by remember(mergeDialogData != null) {
@@ -462,6 +570,7 @@ fun SummarySection(
                 title = selectedDate.format(DateTimeFormatter.ofPattern("M月d日阅读概览")),
                 bookCount = distinctBooks.size,
                 totalTimeMillis = dailyTime,
+                bookmarkCount = state.totalBookmarkCount,
                 bookNamesForCover = distinctBooks.take(3),
                 viewModel = viewModel,
                 onClick = { }
@@ -476,6 +585,7 @@ fun SummarySection(
                 title = "累计阅读成就",
                 bookCount = allBooksCount,
                 totalTimeMillis = totalTime,
+                bookmarkCount = state.totalBookmarkCount,
                 bookNamesForCover = state.latestRecords.take(5).map { it.bookName to it.bookAuthor },
                 viewModel = viewModel,
                 onClick = {  }
@@ -615,12 +725,13 @@ fun LazyListScope.renderListByMode(
     onConfirmDelete: (() -> Unit) -> Unit,
     onMergeClick: (ReadRecord) -> Unit
 ) {
+    val viewPeriod = state.viewPeriod
 
     when (displayMode) {
         DisplayMode.AGGREGATE -> {
             state.groupedRecords.forEach { (date, details) ->
                 item(key = "header_$date") {
-                    DateHeader(date, details.sumOf { it.readTime })
+                    DateHeader(date, details.sumOf { it.readTime }, viewPeriod)
                 }
                 items(
                     items = details,
@@ -695,6 +806,11 @@ fun LazyListScope.renderListByMode(
                         )
                     }
                 }
+
+            // Dashboard section below the list
+            item(key = "dashboard_section") {
+                ReadingDashboardSection(state = state, onBookClick = onBookClick, viewModel = viewModel)
+            }
             }
     }
 }
@@ -908,7 +1024,8 @@ fun ReadRecordItem(
 @Composable
 fun DateHeader(
     date: String,
-    dailyTotalTime: Long? = null
+    dailyTotalTime: Long? = null,
+    viewPeriod: ViewPeriod = ViewPeriod.DAY
 ) {
     CollapsibleHeader(
         showIcon = false,
@@ -916,7 +1033,7 @@ fun DateHeader(
         onToggle = { },
         title = "",
         titleContent = {
-            val dateText = formatFriendlyDate(date)
+            val dateText = formatViewPeriodDate(date, viewPeriod)
             AppText(
                 text = dateText,
                 style = LegadoTheme.typography.bodyMedium,
@@ -939,6 +1056,7 @@ fun ReadingSummaryCard(
     title: String,
     bookCount: Int,
     totalTimeMillis: Long,
+    bookmarkCount: Int = 0,
     bookNamesForCover: List<Pair<String, String>>,
     viewModel: ReadRecordViewModel,
     onClick: () -> Unit
@@ -1005,6 +1123,14 @@ fun ReadingSummaryCard(
                     style = LegadoTheme.typography.bodySmall,
                     color = LegadoTheme.colorScheme.onSurfaceVariant
                 )
+
+                if (bookmarkCount > 0) {
+                    AppText(
+                        text = "书签 $bookmarkCount 条",
+                        style = LegadoTheme.typography.bodySmall,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             if (bookNamesForCover.isNotEmpty()) {
@@ -1046,4 +1172,330 @@ fun BookStackView(coverPaths: List<String?>) {
 
 fun formatDuring(mss: Long): String {
     return formatReadDuration(mss)
+}
+
+fun formatViewPeriodDate(dateKey: String, viewPeriod: ViewPeriod): String {
+    return when (viewPeriod) {
+        ViewPeriod.DAY -> formatFriendlyDate(dateKey)
+        ViewPeriod.WEEK -> {
+            // Format: "2024-W12" -> "2024年 第12周"
+            val parts = dateKey.split("-")
+            if (parts.size >= 2) {
+                "${parts[0]}年 第${parts[1].substring(1)}周"
+            } else dateKey
+        }
+        ViewPeriod.MONTH -> {
+            // Format: "2024-01" -> "2024年1月"
+            val parts = dateKey.split("-")
+            if (parts.size >= 2) {
+                val monthNum = parts[1].toIntOrNull()
+                if (monthNum != null) {
+                    "${parts[0]}年${monthNum}月"
+                } else dateKey
+            } else dateKey
+        }
+        ViewPeriod.YEAR -> "${dateKey}年"
+    }
+}
+
+@Composable
+fun ViewPeriodSelectorItem(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AppIcon(icon, contentDescription = null)
+        Spacer(modifier = Modifier.width(16.dp))
+        AppText(
+            text = title,
+            style = LegadoTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f)
+        )
+        if (isSelected) {
+            AppIcon(
+                Icons.Default.Merge, // Using a check-like icon for selected state
+                contentDescription = null,
+                tint = LegadoTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+// ─── Reading Dashboard ───────────────────────────────────────────────────────
+
+@Composable
+fun ReadingDashboardSection(
+    state: ReadRecordUiState,
+    onBookClick: (String, String) -> Unit,
+    viewModel: ReadRecordViewModel
+) {
+    val hasData = state.currentStreak > 0 || state.bestStreak > 0 ||
+            state.last7DaysReadTime.any { it.second > 0 } ||
+            state.almostFinishedBooks.isNotEmpty()
+
+    if (!hasData) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+    ) {
+        // Streak row
+        if (state.currentStreak > 0 || state.bestStreak > 0) {
+            StreakCard(
+                currentStreak = state.currentStreak,
+                bestStreak = state.bestStreak
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Weekly bar chart
+        if (state.last7DaysReadTime.any { it.second > 0 }) {
+            WeeklyBarChartCard(data = state.last7DaysReadTime)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Almost finished books
+        if (state.almostFinishedBooks.isNotEmpty()) {
+            AlmostFinishedSection(
+                books = state.almostFinishedBooks,
+                onBookClick = onBookClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun StreakCard(currentStreak: Int, bestStreak: Int) {
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .adaptiveHorizontalPadding(vertical = 0.dp),
+        containerColor = LegadoTheme.colorScheme.surfaceContainer
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            StreakStat(
+                label = "当前连续",
+                value = currentStreak,
+                unit = "天",
+                highlight = true
+            )
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(48.dp)
+                    .drawBehind {
+                        drawRect(color = Color.Gray.copy(alpha = 0.3f))
+                    }
+            )
+            StreakStat(
+                label = "最佳连续",
+                value = bestStreak,
+                unit = "天",
+                highlight = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun StreakStat(label: String, value: Int, unit: String, highlight: Boolean) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        AppText(
+            text = label,
+            style = LegadoTheme.typography.labelSmall,
+            color = LegadoTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            AppText(
+                text = "$value",
+                style = LegadoTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (highlight) LegadoTheme.colorScheme.primary
+                        else LegadoTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+            AppText(
+                text = unit,
+                style = LegadoTheme.typography.bodyMedium,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeeklyBarChartCard(data: List<Pair<String, Long>>) {
+    val primaryColor = LegadoTheme.colorScheme.primary
+    val surfaceVariant = LegadoTheme.colorScheme.surfaceContainerHighest
+    val maxTime = data.maxOfOrNull { it.second }?.takeIf { it > 0L } ?: 1L
+
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .adaptiveHorizontalPadding(vertical = 0.dp),
+        containerColor = LegadoTheme.colorScheme.surfaceContainer
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            AppText(
+                text = "近7天阅读",
+                style = LegadoTheme.typography.labelLarge,
+                color = LegadoTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(80.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                data.forEach { (label, timeMs) ->
+                    val fraction = (timeMs.toFloat() / maxTime).coerceIn(0f, 1f)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            val barWidth = size.width
+                            val fullHeight = size.height
+                            val barHeight = fullHeight * fraction
+                            val yTop = fullHeight - barHeight
+
+                            // Background bar
+                            drawRoundRect(
+                                color = surfaceVariant,
+                                topLeft = Offset(0f, 0f),
+                                size = Size(barWidth, fullHeight),
+                                cornerRadius = CornerRadius(4.dp.toPx())
+                            )
+                            // Filled bar
+                            if (fraction > 0f) {
+                                drawRoundRect(
+                                    color = primaryColor,
+                                    topLeft = Offset(0f, yTop),
+                                    size = Size(barWidth, barHeight),
+                                    cornerRadius = CornerRadius(4.dp.toPx())
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        AppText(
+                            text = label,
+                            style = LegadoTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = LegadoTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlmostFinishedSection(
+    books: List<AlmostFinishedBook>,
+    onBookClick: (String, String) -> Unit
+) {
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .adaptiveHorizontalPadding(vertical = 0.dp),
+        containerColor = LegadoTheme.colorScheme.surfaceContainer
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            AppText(
+                text = "即将读完 (${books.size})",
+                style = LegadoTheme.typography.labelLarge,
+                color = LegadoTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            books.forEach { book ->
+                AlmostFinishedBookItem(book = book, onClick = { onBookClick(book.bookName, book.bookAuthor) })
+                if (book != books.last()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlmostFinishedBookItem(book: AlmostFinishedBook, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(6.dp))
+        ) {
+            CoilBookCover(
+                name = book.bookName,
+                author = book.bookAuthor,
+                path = book.coverUrl,
+                modifier = Modifier.size(48.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            AppText(
+                text = book.bookName,
+                style = LegadoTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            AppText(
+                text = book.bookAuthor.ifBlank { "未知作者" },
+                style = LegadoTheme.typography.bodySmall,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            val progressPct = (book.progressFraction * 100).toInt()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LinearProgressIndicator(
+                    progress = { book.progressFraction },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = LegadoTheme.colorScheme.primary,
+                    trackColor = LegadoTheme.colorScheme.surfaceContainerHighest
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                AppText(
+                    text = "$progressPct%",
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.primary
+                )
+            }
+        }
+    }
 }

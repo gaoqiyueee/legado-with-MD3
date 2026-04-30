@@ -97,14 +97,15 @@ class WebService : BaseService() {
             val addressList = NetworkUtils.getLocalIPAddress()
             notificationList.clear()
             if (addressList.any()) {
-                notificationList.addAll(addressList.map { address ->
-                    getString(
-                        R.string.http_ip,
-                        address.hostAddress,
-                        getPort()
-                    )
-                })
-                hostAddress = notificationList.first()
+                // 优先取 Wi-Fi 接口地址（wlan0），避免同时显示热点/VPN 等多个地址
+                val preferredAddress = addressList.firstOrNull { addr ->
+                    try {
+                        val iface = java.net.NetworkInterface.getByInetAddress(addr)
+                        iface?.name?.startsWith("wlan") == true
+                    } catch (e: Exception) { false }
+                } ?: addressList.first()
+                hostAddress = getString(R.string.http_ip, preferredAddress.hostAddress, getPort())
+                notificationList.add(hostAddress)
             } else {
                 hostAddress = getString(R.string.network_connection_unavailable)
                 notificationList.add(hostAddress)

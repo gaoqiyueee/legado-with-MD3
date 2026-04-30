@@ -162,4 +162,5 @@ enum class BookInfoMenuAction {
     ToggleDeleteAlert,
     ClearCache,
     ShowLog,
+    Archive,
 }

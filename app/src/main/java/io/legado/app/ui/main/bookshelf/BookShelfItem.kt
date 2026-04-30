@@ -1,6 +1,7 @@
 package io.legado.app.ui.main.bookshelf
 
 import androidx.compose.runtime.Stable
+import io.legado.app.constant.BookStorageState
 import io.legado.app.constant.BookType
 import io.legado.app.data.entities.Book
 import kotlin.math.max
@@ -11,6 +12,9 @@ data class BookShelfItem(
     val name: String,
     val author: String,
     val originName: String,
+    val intro: String?,
+    val customIntro: String?,
+    val remark: String?,
     val coverUrl: String?,
     val customCoverUrl: String?,
     val durChapterTitle: String?,
@@ -24,7 +28,8 @@ data class BookShelfItem(
     val type: Int,
     val group: Long,
     val order: Int,
-    val canUpdate: Boolean = true
+    val canUpdate: Boolean = true,
+    val storageState: Int = BookStorageState.LOCAL
 ) {
     fun getDisplayCover() = if (customCoverUrl.isNullOrEmpty()) coverUrl else customCoverUrl
 
@@ -60,5 +65,6 @@ fun BookShelfItem.toLightBook() = Book(
     type = type,
     group = group,
     order = order,
-    canUpdate = canUpdate
+    canUpdate = canUpdate,
+    storageState = storageState
 )

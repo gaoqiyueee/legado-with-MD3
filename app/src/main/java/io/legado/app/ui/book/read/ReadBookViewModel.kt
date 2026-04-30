@@ -6,6 +6,7 @@ import androidx.lifecycle.MutableLiveData
 import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
+import io.legado.app.constant.BookStorageState
 import io.legado.app.constant.BookType
 import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
@@ -114,6 +115,11 @@ class ReadBookViewModel(
             ReadBook.resetData(book)
         }
         isInitFinish = true
+        // 元信息/归档书籍：本地无文件，无法阅读，提示用户去书架下载
+        if (book.storageState != BookStorageState.LOCAL) {
+            ReadBook.upMsg(context.getString(R.string.book_not_downloaded))
+            return
+        }
         if (!book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
             return
         }
