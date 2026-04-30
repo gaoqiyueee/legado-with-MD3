@@ -364,7 +364,9 @@ object BookController {
      */
     suspend fun deleteBookmark(postData: String?): ReturnData {
         val returnData = ReturnData()
-        val time = postData?.toLongOrNull()
+        // web端传入 {"time": 123456}，兼容直接传数字字符串的情况
+        val time = GSON.fromJsonObject<Bookmark>(postData).getOrNull()?.time
+            ?: postData?.toLongOrNull()
         if (time == null) {
             return returnData.setErrorMsg("时间戳不能为空")
         }
