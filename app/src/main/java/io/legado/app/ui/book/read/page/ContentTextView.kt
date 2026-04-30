@@ -278,7 +278,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
         touch(x, y) { _, textPos, textPage, textLine, column ->
             // 优先处理书签点击（下划线区域）
             if (column is TextBaseColumn && column.isBookmark) {
-                val charPos = textLine.chapterPosition
+                val charPos = textLine.chapterPosition + textPos.columnIndex
                 val chapterIndex = textPage.textChapter?.chapter?.index ?: -1
                 if (chapterIndex >= 0) {
                     GlobalScope.launch(Dispatchers.IO) {

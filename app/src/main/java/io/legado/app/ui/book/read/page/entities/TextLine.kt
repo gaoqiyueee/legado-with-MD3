@@ -180,7 +180,12 @@ data class TextLine(
         if (bookmarkColumnCount > 0) {
             val bookmarkPaint = ChapterProvider.bookmarkPaint
             val lineY = height - 3.dpToPx()
-            canvas.drawLine(lineStart + indentWidth, lineY, lineEnd, lineY, bookmarkPaint)
+            for (i in columns.indices) {
+                val column = columns[i]
+                if (column is io.legado.app.ui.book.read.page.entities.column.TextBaseColumn && column.isBookmark) {
+                    canvas.drawLine(column.start, lineY, column.end, lineY, bookmarkPaint)
+                }
+            }
         }
 
         if (ReadBookConfig.underline && !isImage && ReadBook.book?.isImage != true) {
