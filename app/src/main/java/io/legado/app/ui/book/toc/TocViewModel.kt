@@ -571,12 +571,15 @@ class TocViewModel(
     }
 
     fun updateBookmark(bookmark: Bookmark) =
-        viewModelScope.launch(Dispatchers.IO) { appDb.bookmarkDao.insert(bookmark) }
+        viewModelScope.launch(Dispatchers.IO) {
+            appDb.bookmarkDao.insert(bookmark)
+            AppWebDav.markBookmarkDirty()
+        }
 
     fun deleteBookmark(bookmark: Bookmark) =
         viewModelScope.launch(Dispatchers.IO) {
             appDb.bookmarkDao.delete(bookmark)
-            AppWebDav.uploadBookmarks()
+            AppWebDav.markBookmarkDirty()
         }
 
     fun deleteNote(note: ReadNote) =

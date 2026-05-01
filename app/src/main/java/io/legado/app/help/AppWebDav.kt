@@ -11,6 +11,7 @@ import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.CacheManager
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.storage.Backup
 import io.legado.app.help.storage.Restore
@@ -49,6 +50,15 @@ object AppWebDav {
     private val notesWebDavUrl get() = "${rootWebDavUrl}readNotes/"
     private val bookmarksWebDavUrl get() = "${rootWebDavUrl}bookmarks/"
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
+
+    /** 本地书签是否有未同步到云端的变更 */
+    @Volatile
+    var bookmarkDirty: Boolean = false
+
+    /** 标记本地书签已变更，需要在下次 onPause/close 时上传 */
+    fun markBookmarkDirty() {
+        bookmarkDirty = true
+    }
 
     var authorization: Authorization? = null
         private set
@@ -429,9 +439,10 @@ object AppWebDav {
 
     /**
      * 上传书签到 WebDAV
-     * 直接将本地书签全量覆盖云端，不再做云端合并（合并逻辑移至 downloadBookmarks）
+     * 仅在本地有变更（bookmarkDirty=true）时才上传，上传成功后更新本地同步时间戳
      */
     suspend fun uploadBookmarks() {
+        if (!bookmarkDirty) return
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
@@ -446,6 +457,9 @@ object AppWebDav {
                 json.toByteArray(),
                 "application/json"
             )
+            // 上传成功：记录同步时间，清除 dirty 标记
+            CacheManager.put("bookmarkSyncTime", System.currentTimeMillis())
+            bookmarkDirty = false
         }.onFailure {
             currentCoroutineContext().ensureActive()
             AppLog.put("上传书签失败\n${it.localizedMessage}", it)
@@ -454,13 +468,19 @@ object AppWebDav {
 
     /**
      * 从 WebDAV 下载书签并同步到本地（替换而非合并）
-     * 对云端有数据的书籍，先删除本地书签再插入云端书签，确保删除操作可以跨设备传播。
-     * 对云端无数据的书籍（本设备独有），保持本地书签不变。
+     * 先比较云端文件修改时间与本地同步时间戳，无变化则跳过下载。
+     * 有变化时对云端有数据的书籍执行替换，确保删除操作可以跨设备传播。
      */
     suspend fun downloadBookmarks() {
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
+            // 比较云端最后修改时间与本地上次同步时间，无变化则跳过
+            val cloudLastModified = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization)
+                .getWebDavFile()?.lastModify ?: 0L
+            val localSyncTime = CacheManager.getLong("bookmarkSyncTime") ?: 0L
+            if (cloudLastModified > 0 && cloudLastModified <= localSyncTime) return
+
             val byteArray = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).download()
             val json = String(byteArray)
             if (!json.isJson()) return
@@ -471,13 +491,16 @@ object AppWebDav {
             val toSync = remoteBookmarks
                 .filter { (it.bookName to it.bookAuthor) in localBookKeys }
             // 对云端有数据的书籍执行替换：先删除本地旧书签，再插入云端书签
-            // 这样其他设备上的删除操作才能传播到本设备
             val booksInCloud = toSync.map { it.bookName to it.bookAuthor }.toSet()
             booksInCloud.forEach { (name, author) ->
                 appDb.bookmarkDao.deleteByBook(name, author)
             }
             if (toSync.isNotEmpty()) {
                 appDb.bookmarkDao.insert(*toSync.toTypedArray())
+            }
+            // 下载成功：更新本地同步时间为云端修改时间
+            if (cloudLastModified > 0) {
+                CacheManager.put("bookmarkSyncTime", cloudLastModified)
             }
         }.onFailure {
             currentCoroutineContext().ensureActive()

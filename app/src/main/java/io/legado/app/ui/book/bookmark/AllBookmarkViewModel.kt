@@ -183,13 +183,14 @@ class AllBookmarkViewModel(
     fun updateBookmark(bookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             bookmarkDao.insert(bookmark)
+            AppWebDav.markBookmarkDirty()
         }
     }
 
     fun deleteBookmark(bookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             bookmarkDao.delete(bookmark)
-            AppWebDav.uploadBookmarks()
+            AppWebDav.markBookmarkDirty()
         }
     }
 

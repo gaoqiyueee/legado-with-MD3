@@ -304,7 +304,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
                                         0 -> context.sendToClip(bookmark.bookText)
                                         1 -> GlobalScope.launch(Dispatchers.IO) {
                                             appDb.bookmarkDao.delete(bookmark)
-                                            AppWebDav.uploadBookmarks()
+                                            AppWebDav.markBookmarkDirty()
                                         }
                                         2 -> ctx.showDialogFragment(BookmarkDialog(bookmark))
                                     }
