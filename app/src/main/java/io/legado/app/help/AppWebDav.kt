@@ -8,6 +8,7 @@ import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.exception.NoStackTraceException
@@ -51,6 +52,7 @@ object AppWebDav {
     private val bookmarksWebDavUrl get() = "${rootWebDavUrl}bookmarks/"
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
     private val bookInfoWebDavUrl get() = "${rootWebDavUrl}bookInfo/"
+    private val markersWebDavUrl get() = "${rootWebDavUrl}markers/"
 
     /** 本地书签是否有未同步到云端的变更 */
     @Volatile
@@ -59,6 +61,15 @@ object AppWebDav {
     /** 标记本地书签已变更，需要在下次 onPause/close 时上传 */
     fun markBookmarkDirty() {
         bookmarkDirty = true
+    }
+
+    /** 本地位置标记是否有未同步到云端的变更 */
+    @Volatile
+    var markerDirty: Boolean = false
+
+    /** 标记本地位置标记已变更 */
+    fun markMarkerDirty() {
+        markerDirty = true
     }
 
     var authorization: Authorization? = null
@@ -106,6 +117,7 @@ object AppWebDav {
                 WebDav(bookmarksWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(readRecordsWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(bookInfoWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(markersWebDavUrl, mAuthorization).makeAsDir()
                 val rootBooksUrl = "${rootWebDavUrl}books/"
                 defaultBookWebDav = RemoteBookWebDav(rootBooksUrl, mAuthorization)
                 authorization = mAuthorization
@@ -505,6 +517,63 @@ object AppWebDav {
         }.onFailure {
             currentCoroutineContext().ensureActive()
             AppLog.put("下载书签失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 上传位置标记到 WebDAV
+     * 仅在本地有变更（markerDirty=true）时才上传
+     */
+    suspend fun uploadMarkers() {
+        if (!markerDirty) return
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val markers = appDb.readMarkerDao.all
+            val json = GSON.toJson(markers)
+            WebDav(markersWebDavUrl, authorization).makeAsDir()
+            WebDav("${markersWebDavUrl}markers.json", authorization).upload(
+                json.toByteArray(),
+                "application/json"
+            )
+            CacheManager.put("markerSyncTime", System.currentTimeMillis())
+            markerDirty = false
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传位置标记失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载位置标记并同步到本地（替换策略，与书签一致）
+     */
+    suspend fun downloadMarkers() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val cloudLastModified = WebDav("${markersWebDavUrl}markers.json", authorization)
+                .getWebDavFile()?.lastModify ?: 0L
+            val localSyncTime = CacheManager.getLong("markerSyncTime") ?: 0L
+            if (cloudLastModified > 0 && cloudLastModified <= localSyncTime) return
+
+            val byteArray = WebDav("${markersWebDavUrl}markers.json", authorization).download()
+            val json = String(byteArray)
+            if (!json.isJson()) return
+            val type = object : TypeToken<List<ReadMarker>>() {}.type
+            val remoteMarkers: List<ReadMarker> = GSON.fromJson(json, type) ?: return
+            val booksInCloud = remoteMarkers.map { it.bookName to it.bookAuthor }.toSet()
+            booksInCloud.forEach { (name, author) ->
+                appDb.readMarkerDao.deleteByBook(name, author)
+            }
+            if (remoteMarkers.isNotEmpty()) {
+                appDb.readMarkerDao.insert(*remoteMarkers.toTypedArray())
+            }
+            if (cloudLastModified > 0) {
+                CacheManager.put("markerSyncTime", cloudLastModified)
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("下载位置标记失败\n${it.localizedMessage}", it)
         }
     }
 

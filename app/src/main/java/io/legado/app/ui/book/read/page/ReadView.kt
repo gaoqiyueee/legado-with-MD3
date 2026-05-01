@@ -9,6 +9,8 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.WindowInsets
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import io.legado.app.R
 import io.legado.app.constant.PageAnim
@@ -69,6 +71,7 @@ class ReadView(context: Context, attrs: AttributeSet) :
     val defaultAnimationSpeed = 300
     private var pressDown = false
     private var isMove = false
+    private var isSwipeDownGesture = false
 
     //起始点
     var startX: Float = 0f
@@ -204,6 +207,7 @@ class ReadView(context: Context, attrs: AttributeSet) :
                 postDelayed(longPressRunnable, longPressTimeout)
                 pressDown = true
                 isMove = false
+                isSwipeDownGesture = false
                 pageDelegate?.onTouch(event)
                 pageDelegate?.onDown()
                 setStartPoint(event.x, event.y, false)
@@ -215,12 +219,26 @@ class ReadView(context: Context, attrs: AttributeSet) :
                 val absY = abs(startY - event.y)
                 if (!isMove) {
                     isMove = absX > slopSquare || absY > slopSquare
+                    if (isMove && !isTextSelected) {
+                        // 在手势方向确定时，判断是否为向下滑动
+                        // 条件：垂直向下分量 > 水平分量的1.5倍，且确实是向下
+                        val dy = event.y - startY
+                        if (dy > 0 && absY > absX * 1.5f) {
+                            isSwipeDownGesture = true
+                            callBack.showMarkerIndicator()
+                        }
+                    }
                 }
                 if (isMove) {
                     longPressed = false
                     removeCallbacks(longPressRunnable)
                     if (isTextSelected) {
                         selectText(event.x, event.y)
+                    } else if (isSwipeDownGesture) {
+                        // 跟随手指下拉，阻尼效果：越拉越难
+                        val dy = event.y - startY
+                        val resistance = (1f - dy / (3f * height)).coerceAtLeast(0.1f)
+                        curPage.translationY = (dy * resistance).coerceAtLeast(0f)
                     } else {
                         pageDelegate?.onTouch(event)
                     }
@@ -241,7 +259,24 @@ class ReadView(context: Context, attrs: AttributeSet) :
                         return true
                     }
                 }
-                if (isTextSelected) {
+                if (isSwipeDownGesture) {
+                    // 下滑手势确认：总位移需足够大（> 100dp），触发添加标记
+                    val totalDy = event.y - startY
+                    val minSwipeY = 100 * resources.displayMetrics.density
+                    val triggered = totalDy > minSwipeY
+                    isSwipeDownGesture = false
+                    // 弹回动画：触发时用 Overshoot 给一点弹性感，否则平滑缩回
+                    val interpolator = if (triggered) OvershootInterpolator(1.5f) else DecelerateInterpolator()
+                    curPage.animate()
+                        .translationY(0f)
+                        .setDuration(300)
+                        .setInterpolator(interpolator)
+                        .withEndAction {
+                            if (triggered) callBack.addReadMarker()
+                            callBack.hideMarkerIndicator()
+                        }
+                        .start()
+                } else if (isTextSelected) {
                     callBack.showTextActionMenu()
                 } else if (pageDelegate!!.isMoved) {
                     pageDelegate?.onTouch(event)
@@ -253,7 +288,17 @@ class ReadView(context: Context, attrs: AttributeSet) :
                 removeCallbacks(longPressRunnable)
                 if (!pressDown) return true
                 pressDown = false
-                if (isTextSelected) {
+                if (isSwipeDownGesture) {
+                    curPage.animate()
+                        .translationY(0f)
+                        .setDuration(250)
+                        .setInterpolator(DecelerateInterpolator())
+                        .withEndAction {
+                            callBack.hideMarkerIndicator()
+                            isSwipeDownGesture = false
+                        }
+                        .start()
+                } else if (isTextSelected) {
                     callBack.showTextActionMenu()
                 } else if (pageDelegate!!.isMoved) {
                     pageDelegate?.onTouch(event)
@@ -761,6 +806,9 @@ class ReadView(context: Context, attrs: AttributeSet) :
         fun autoPageStop()
         fun openChapterList()
         fun addBookmark()
+        fun addReadMarker()
+        fun showMarkerIndicator()
+        fun hideMarkerIndicator()
         fun changeReplaceRuleState()
         fun openSearchActivity(searchWord: String?)
         fun upSystemUiVisibility()

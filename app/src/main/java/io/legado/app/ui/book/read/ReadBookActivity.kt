@@ -38,6 +38,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.IntentData
@@ -1178,6 +1179,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         handler.post {
             upMenu()
             binding.readMenu.upBookView()
+            upMarkerIndicatorCache()
         }
     }
 
@@ -1218,7 +1220,37 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
             loadStates = false
             success?.invoke()
+            upMarkerIndicatorCache()
         }
+    }
+
+    private var cachedHasMarker: Boolean = false
+
+    private fun upMarkerIndicatorCache() {
+        val book = ReadBook.book ?: return
+        val chapterIndex = ReadBook.durChapterIndex
+        val chapterPos = ReadBook.durChapterPos
+        lifecycleScope.launch(IO) {
+            cachedHasMarker = appDb.readMarkerDao.getByPosition(
+                book.name, book.author, chapterIndex, chapterPos
+            ) != null
+        }
+    }
+
+    override fun showMarkerIndicator() {
+        binding.ivMarkerIndicator.setColorFilter(ReadBookConfig.textColor)
+        binding.ivMarkerIndicator.alpha = 0f
+        binding.ivMarkerIndicator.visibility = View.VISIBLE
+        val targetAlpha = if (cachedHasMarker) 0.9f else 0.25f
+        binding.ivMarkerIndicator.animate().alpha(targetAlpha).setDuration(150).start()
+    }
+
+    override fun hideMarkerIndicator() {
+        binding.ivMarkerIndicator.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction { binding.ivMarkerIndicator.visibility = View.INVISIBLE }
+            .start()
     }
 
     override suspend fun upContentAwait(
@@ -1854,6 +1886,50 @@ class ReadBookActivity : BaseReadBookActivity(),
                 bookText = page.text.replace(Regex("[袮꧁]"), "").trim()
             }
             showDialogFragment(BookmarkDialog(bookmark))
+        }
+    }
+
+    override fun addReadMarker() {
+        val book = ReadBook.book ?: return
+        val chapterIndex = ReadBook.durChapterIndex
+        val chapterPos = ReadBook.durChapterPos
+        lifecycleScope.launch(IO) {
+            val existing = appDb.readMarkerDao.getByPosition(
+                book.name, book.author, chapterIndex, chapterPos
+            )
+            if (existing != null) {
+                appDb.readMarkerDao.delete(existing)
+                AppWebDav.markMarkerDirty()
+                AppWebDav.uploadMarkers()
+                withContext(Main) {
+                    cachedHasMarker = false
+                    toastOnUi(getString(R.string.marker_removed))
+                }
+            } else {
+                val chapter = ReadBook.curTextChapter ?: return@launch
+                val page = chapter.getPage(ReadBook.durPageIndex) ?: return@launch
+                val firstLine = page.lines.firstOrNull { it.text.isNotBlank() }?.text?.trim() ?: ""
+                val displayText = when {
+                    firstLine.length > 20 -> firstLine.take(20) + "…"
+                    firstLine.isNotBlank() -> firstLine
+                    else -> getString(R.string.marker_position)
+                }
+                val marker = ReadMarker(
+                    bookName = book.name,
+                    bookAuthor = book.author,
+                    chapterIndex = chapterIndex,
+                    chapterPos = chapterPos,
+                    chapterName = page.title,
+                    displayText = displayText
+                )
+                appDb.readMarkerDao.insert(marker)
+                AppWebDav.markMarkerDirty()
+                AppWebDav.uploadMarkers()
+                withContext(Main) {
+                    cachedHasMarker = true
+                    toastOnUi(getString(R.string.marker_added))
+                }
+            }
         }
     }
 

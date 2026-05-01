@@ -299,6 +299,9 @@
     <string name="bookmark">Bookmarks</string>
     <string name="bookmark_add">Add to Bookmarks</string>
     <string name="add_note">Add Note</string>
+    <string name="marker_added">位置标记已添加</string>
+    <string name="marker_position">位置标记</string>
+    <string name="marker_removed">位置标记已删除</string>
     <string name="action_del">Delete</string>
     <string name="load_over_time">Loading timeout</string>
     <string name="join_group">Follow:%s</string>

@@ -38,6 +38,19 @@
         android:layout_height="match_parent"
         android:visibility="gone" />
 
+    <ImageView
+        android:id="@+id/iv_marker_indicator"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="48dp"
+        android:layout_marginEnd="12dp"
+        android:alpha="0"
+        android:contentDescription="@null"
+        android:padding="4dp"
+        android:src="@drawable/ic_bookmark"
+        android:visibility="invisible" />
+
     <io.legado.app.ui.book.read.SearchMenu
         android:id="@+id/search_menu"
         android:layout_width="match_parent"

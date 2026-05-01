@@ -20,7 +20,7 @@ object DatabaseMigrations {
             migration_31_32, migration_32_33, migration_33_34, migration_34_35,
             migration_35_36, migration_36_37, migration_37_38, migration_38_39,
             migration_39_40, migration_40_41, migration_41_42, migration_42_43,
-            migration_82_83, migration_85_86, migration_86_87,
+            migration_82_83, migration_85_86, migration_86_87, migration_87_88,
         )
     }
 
@@ -547,5 +547,27 @@ object DatabaseMigrations {
         columnName = "enabledReview"
     )
     class Migration_64_65 : AutoMigrationSpec
+
+    private val migration_87_88 = object : Migration(87, 88) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `read_markers` (
+                    `id` INTEGER NOT NULL,
+                    `bookName` TEXT NOT NULL DEFAULT '',
+                    `bookAuthor` TEXT NOT NULL DEFAULT '',
+                    `chapterIndex` INTEGER NOT NULL DEFAULT 0,
+                    `chapterPos` INTEGER NOT NULL DEFAULT 0,
+                    `chapterName` TEXT NOT NULL DEFAULT '',
+                    `displayText` TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_read_markers_bookName_bookAuthor` ON `read_markers` (`bookName`, `bookAuthor`)"
+            )
+        }
+    }
 
 }

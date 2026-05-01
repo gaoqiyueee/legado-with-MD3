@@ -18,6 +18,7 @@ import io.legado.app.data.dao.DictRuleDao
 import io.legado.app.data.dao.HttpTTSDao
 import io.legado.app.data.dao.KeyboardAssistsDao
 import io.legado.app.data.dao.ReadRecordDao
+import io.legado.app.data.dao.ReadMarkerDao
 import io.legado.app.data.dao.ReadNoteDao
 import io.legado.app.data.dao.ReplaceRuleDao
 import io.legado.app.data.dao.RssArticleDao
@@ -55,6 +56,7 @@ import io.legado.app.data.entities.TxtTocRule
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.help.DefaultData
 import org.intellij.lang.annotations.Language
@@ -71,7 +73,7 @@ val appDb by lazy {
 }
 
 @Database(
-    version = 87,
+    version = 88,
     exportSchema = true,
     entities = [Book::class, BookGroup::class, BookSource::class, BookChapter::class,
         ReplaceRule::class, SearchBook::class, SearchKeyword::class, Cookie::class,
@@ -79,7 +81,7 @@ val appDb by lazy {
         RssReadRecord::class, ReadRecordDetail::class, ReadRecordSession::class,
         RssStar::class, TxtTocRule::class, ReadRecord::class, HttpTTS::class, Cache::class,
         RuleSub::class, DictRule::class, KeyboardAssist::class, Server::class,
-        SearchContentHistory::class, ReadNote::class],
+        SearchContentHistory::class, ReadNote::class, ReadMarker::class],
     views = [BookSourcePart::class],
     autoMigrations = [
         AutoMigration(from = 43, to = 44),
@@ -144,6 +146,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract val txtTocRuleDao: TxtTocRuleDao
     abstract val readRecordDao: ReadRecordDao
     abstract val readNoteDao: ReadNoteDao
+    abstract val readMarkerDao: ReadMarkerDao
     abstract val httpTTSDao: HttpTTSDao
     abstract val cacheDao: CacheDao
     abstract val ruleSubDao: RuleSubDao

@@ -44,8 +44,10 @@ import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadForOffline
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
@@ -55,6 +57,7 @@ import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -93,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.help.book.isLocal
 import io.legado.app.ui.book.toc.rule.TxtTocRuleActivity
@@ -105,6 +109,7 @@ import io.legado.app.ui.widget.components.ActionItem
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.EmptyMessage
 import io.legado.app.ui.widget.components.SelectionBottomBar
+import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.bookmark.BookmarkEditSheet
 import io.legado.app.ui.widget.components.bookmark.BookmarkItem
 import io.legado.app.ui.widget.components.bookmark.NoteEditSheet
@@ -117,6 +122,8 @@ import io.legado.app.ui.widget.components.lazylist.FastScrollLazyColumn
 import io.legado.app.ui.widget.components.list.TopFloatingStickyItem
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
+import io.legado.app.ui.widget.components.swipe.SwipeAction
+import io.legado.app.ui.widget.components.swipe.SwipeActionContainer
 import io.legado.app.ui.widget.components.tabRow.AppTabRow
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.topbar.DynamicTopAppBar
@@ -136,6 +143,8 @@ fun TocScreen(
     onChapterClick: (Int) -> Unit,
     onOpenReplaceRule: (ReplaceEditRoute?) -> Unit,
     onBookmarkClick: (chapterIndex: Int, chapterPos: Int) -> Unit,
+    onMarkerClick: (chapterIndex: Int, chapterPos: Int) -> Unit = { _, _ -> },
+    onMarkerDelete: (ReadMarker) -> Unit = {},
 ) {
 
     val context = LocalContext.current
@@ -596,6 +605,11 @@ fun TocScreen(
                         viewModel = viewModel,
                         listState = listState,
                         onChapterClick = onChapterClick,
+                        onMarkerClick = onMarkerClick,
+                        onMarkerDelete = { marker ->
+                            viewModel.deleteMarker(marker)
+                            onMarkerDelete(marker)
+                        },
                         contentPadding = adaptiveContentPaddingOnlyVertical(
                             top = padding.calculateTopPadding(),
                             bottom = 120.dp
@@ -687,10 +701,14 @@ fun ChapterListContent(
     viewModel: TocViewModel,
     listState: LazyListState,
     onChapterClick: (Int) -> Unit,
+    onMarkerClick: (chapterIndex: Int, chapterPos: Int) -> Unit = { _, _ -> },
+    onMarkerDelete: (ReadMarker) -> Unit = {},
     contentPadding: PaddingValues
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val collapsedVolumes by viewModel.collapsedVolumes.collectAsStateWithLifecycle()
+    val markers by viewModel.markers.collectAsStateWithLifecycle()
+    val markersByChapter = remember(markers) { markers.groupBy { it.chapterIndex } }
 
     FastScrollLazyColumn(
         state = listState,
@@ -734,9 +752,94 @@ fun ChapterListContent(
                         }
                     )
                 }
+
+                markersByChapter[uiItem.id]?.forEach { marker ->
+                    item(key = "marker_${marker.id}") {
+                        MarkerItem(
+                            modifier = Modifier.animateItem(),
+                            marker = marker,
+                            onClick = { onMarkerClick(marker.chapterIndex, marker.chapterPos) },
+                            onDelete = { onMarkerDelete(marker) },
+                            onRename = { newText -> viewModel.updateMarkerDisplayText(marker, newText) }
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun MarkerItem(
+    modifier: Modifier = Modifier,
+    marker: ReadMarker,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onRename: (String) -> Unit
+) {
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameText by remember(showRenameDialog) { mutableStateOf(marker.displayText) }
+
+    SwipeActionContainer(
+        modifier = modifier,
+        startAction = SwipeAction(
+            icon = Icons.Filled.DriveFileRenameOutline,
+            background = MaterialTheme.colorScheme.primaryContainer,
+            onSwipe = { showRenameDialog = true },
+            hapticFeedback = true
+        ),
+        endAction = SwipeAction(
+            icon = Icons.Filled.Delete,
+            background = MaterialTheme.colorScheme.errorContainer,
+            onSwipe = onDelete,
+            hapticFeedback = true
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick)
+                .padding(start = 40.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.BookmarkAdd,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(
+                text = marker.displayText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+
+    AppAlertDialog(
+        show = showRenameDialog,
+        onDismissRequest = { showRenameDialog = false },
+        title = "重命名标记",
+        confirmText = "确定",
+        onConfirm = {
+            onRename(renameText)
+            showRenameDialog = false
+        },
+        dismissText = "取消",
+        onDismiss = { showRenameDialog = false },
+        content = {
+            OutlinedTextField(
+                value = renameText,
+                onValueChange = { renameText = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

@@ -32,6 +32,7 @@ class MainViewModel(
             kotlin.runCatching { AppWebDav.downloadBookmarks() }
             kotlin.runCatching { AppWebDav.downloadReadRecords() }
             kotlin.runCatching { AppWebDav.downloadAllBookInfo() }
+            kotlin.runCatching { AppWebDav.downloadMarkers() }
         }
     }
 

@@ -37,6 +37,14 @@ class TocActivity : BaseComposeActivity() {
                 }
                 setResult(RESULT_OK, data)
                 finish()
+            },
+            onMarkerClick = { index, pos ->
+                val data = Intent().apply {
+                    putExtra("index", index)
+                    putExtra("chapterPos", pos)
+                }
+                setResult(RESULT_OK, data)
+                finish()
             }
         )
     }

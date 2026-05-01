@@ -12,6 +12,7 @@ import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
@@ -580,6 +581,31 @@ class TocViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             appDb.bookmarkDao.delete(bookmark)
             AppWebDav.markBookmarkDirty()
+        }
+
+    val markers: StateFlow<List<ReadMarker>> =
+        bookState.filterNotNull()
+            .flatMapLatest { book ->
+                appDb.readMarkerDao.flowByBook(book.name, book.author)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    fun deleteMarker(marker: ReadMarker) =
+        viewModelScope.launch(Dispatchers.IO) {
+            appDb.readMarkerDao.delete(marker)
+            AppWebDav.markMarkerDirty()
+            AppWebDav.uploadMarkers()
+        }
+
+    fun updateMarkerDisplayText(marker: ReadMarker, newText: String) =
+        viewModelScope.launch(Dispatchers.IO) {
+            appDb.readMarkerDao.insert(marker.copy(displayText = newText.trim().ifBlank { marker.displayText }))
+            AppWebDav.markMarkerDirty()
+            AppWebDav.uploadMarkers()
         }
 
     fun deleteNote(note: ReadNote) =
