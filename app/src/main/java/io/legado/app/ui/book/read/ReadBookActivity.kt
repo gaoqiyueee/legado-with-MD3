@@ -1887,7 +1887,12 @@ class ReadBookActivity : BaseReadBookActivity(),
             okButton {
                 ReadBook.setProgress(progress)
             }
-            noButton()
+            noButton {
+                // 用户拒绝更新，将本地进度上传覆盖云端，避免重复提醒
+                Coroutine.async {
+                    ReadBook.book?.let { AppWebDav.uploadBookProgress(it) }
+                }
+            }
         }
     }
 

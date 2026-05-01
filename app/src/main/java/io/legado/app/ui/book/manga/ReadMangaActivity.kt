@@ -44,6 +44,7 @@ import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfig
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.source.getSourceType
 import io.legado.app.help.storage.Backup
@@ -519,7 +520,12 @@ class ReadMangaActivity : VMBaseActivity<ActivityMangaBinding, ReadMangaViewMode
             okButton {
                 ReadManga.setProgress(progress)
             }
-            noButton()
+            noButton {
+                // 用户拒绝更新，将本地进度上传覆盖云端，避免重复提醒
+                Coroutine.async {
+                    ReadManga.book?.let { AppWebDav.uploadBookProgress(it) }
+                }
+            }
         }
     }
 
