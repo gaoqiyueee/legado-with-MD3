@@ -50,6 +50,7 @@ object AppWebDav {
     private val notesWebDavUrl get() = "${rootWebDavUrl}readNotes/"
     private val bookmarksWebDavUrl get() = "${rootWebDavUrl}bookmarks/"
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
+    private val bookInfoWebDavUrl get() = "${rootWebDavUrl}bookInfo/"
 
     /** 本地书签是否有未同步到云端的变更 */
     @Volatile
@@ -104,6 +105,7 @@ object AppWebDav {
                 WebDav(notesWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(bookmarksWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(readRecordsWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(bookInfoWebDavUrl, mAuthorization).makeAsDir()
                 val rootBooksUrl = "${rootWebDavUrl}books/"
                 defaultBookWebDav = RemoteBookWebDav(rootBooksUrl, mAuthorization)
                 authorization = mAuthorization
@@ -558,6 +560,88 @@ object AppWebDav {
             currentCoroutineContext().ensureActive()
             AppLog.put("上传阅读记录失败\n${it.localizedMessage}", it)
         }
+    }
+
+    /**
+     * 上传单本书籍的用户自定义信息（书名、作者、简介、备注、自定义封面）到 WebDAV。
+     * 文件路径：bookInfo/{name}_{author}.json
+     */
+    suspend fun uploadBookInfo(book: Book) {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val info = mapOf(
+                "name" to book.name,
+                "author" to book.author,
+                "customIntro" to book.customIntro,
+                "remark" to book.remark,
+                "customCoverUrl" to book.customCoverUrl,
+                "customTag" to book.customTag,
+                "modifiedTime" to System.currentTimeMillis()
+            )
+            val json = GSON.toJson(info)
+            val fileName = getBookInfoFileName(book.name, book.author)
+            WebDav("$bookInfoWebDavUrl$fileName", authorization).upload(
+                json.toByteArray(), "application/json"
+            )
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传书籍信息失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载所有书籍的用户自定义信息，与本地比较后按需更新。
+     * 使用 CacheManager 记录每本书的本地同步时间，仅在云端更新时才拉取。
+     */
+    suspend fun downloadAllBookInfo() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val cloudFiles = WebDav(bookInfoWebDavUrl, authorization).listFiles()
+            if (cloudFiles.isEmpty()) return
+            val fileMap = cloudFiles.associateBy { it.displayName }
+            appDb.bookDao.all.forEach { book ->
+                val fileName = getBookInfoFileName(book.name, book.author)
+                val cloudFile = fileMap[fileName] ?: return@forEach
+                val localSyncTime = CacheManager.getLong("bookInfoSyncTime_${book.name}_${book.author}") ?: 0L
+                if (cloudFile.lastModify > 0 && cloudFile.lastModify <= localSyncTime) return@forEach
+                kotlin.runCatching {
+                    val byteArray = WebDav("$bookInfoWebDavUrl$fileName", authorization).download()
+                    val json = String(byteArray)
+                    if (!json.isJson()) return@runCatching
+                    val type = object : com.google.gson.reflect.TypeToken<Map<String, Any?>>() {}.type
+                    val info: Map<String, Any?> = GSON.fromJson(json, type) ?: return@runCatching
+                    var changed = false
+                    (info["name"] as? String)?.let { if (it.isNotEmpty() && it != book.name) { book.name = it; changed = true } }
+                    (info["author"] as? String)?.let { if (it != book.author) { book.author = it; changed = true } }
+                    val customIntro = info["customIntro"] as? String
+                    if (customIntro != book.customIntro) { book.customIntro = customIntro; changed = true }
+                    val remark = info["remark"] as? String
+                    if (remark != book.remark) { book.remark = remark; changed = true }
+                    val customCoverUrl = info["customCoverUrl"] as? String
+                    if (customCoverUrl != book.customCoverUrl) { book.customCoverUrl = customCoverUrl; changed = true }
+                    val customTag = info["customTag"] as? String
+                    if (customTag != book.customTag) { book.customTag = customTag; changed = true }
+                    if (changed) {
+                        appDb.bookDao.update(book)
+                    }
+                    if (cloudFile.lastModify > 0) {
+                        CacheManager.put("bookInfoSyncTime_${book.name}_${book.author}", cloudFile.lastModify)
+                    }
+                }.onFailure {
+                    currentCoroutineContext().ensureActive()
+                    AppLog.put("下载书籍信息失败 ${book.name}\n${it.localizedMessage}", it)
+                }
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("下载书籍信息列表失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    private fun getBookInfoFileName(name: String, author: String): String {
+        return UrlUtil.replaceReservedChar("${name}_${author}".normalizeFileName()) + ".json"
     }
 
     /**

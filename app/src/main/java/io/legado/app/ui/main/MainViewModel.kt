@@ -31,6 +31,7 @@ class MainViewModel(
             appStartupMaintenanceUseCase.ensureDefaultHttpTts()
             kotlin.runCatching { AppWebDav.downloadBookmarks() }
             kotlin.runCatching { AppWebDav.downloadReadRecords() }
+            kotlin.runCatching { AppWebDav.downloadAllBookInfo() }
         }
     }
 

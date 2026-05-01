@@ -10,6 +10,7 @@ import io.legado.app.constant.BookType
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.repository.ReadRecordRepository
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.isAudio
@@ -126,6 +127,9 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                     ReadBook.book = book
                 }
                 appDb.bookDao.update(book)
+
+                // 保存后立即将用户自定义信息上传到云端
+                kotlin.runCatching { AppWebDav.uploadBookInfo(book) }
 
                 // 如果书名或作者变更，级联更新关联表
                 val nameChanged = oldBook.name != book.name
