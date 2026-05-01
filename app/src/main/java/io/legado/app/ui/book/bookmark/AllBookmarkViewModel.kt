@@ -9,6 +9,7 @@ import io.legado.app.data.dao.BookDao
 import io.legado.app.data.dao.BookmarkDao
 import io.legado.app.data.dao.ReadRecordDao
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.help.AppWebDav
 import io.legado.app.utils.FileDoc
 import io.legado.app.utils.GSON
 import io.legado.app.utils.createFileIfNotExist
@@ -188,6 +189,7 @@ class AllBookmarkViewModel(
     fun deleteBookmark(bookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             bookmarkDao.delete(bookmark)
+            AppWebDav.uploadBookmarks()
         }
     }
 

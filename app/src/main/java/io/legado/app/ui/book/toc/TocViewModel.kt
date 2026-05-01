@@ -15,6 +15,7 @@ import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.ReadNote
 import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isLocal
@@ -573,7 +574,10 @@ class TocViewModel(
         viewModelScope.launch(Dispatchers.IO) { appDb.bookmarkDao.insert(bookmark) }
 
     fun deleteBookmark(bookmark: Bookmark) =
-        viewModelScope.launch(Dispatchers.IO) { appDb.bookmarkDao.delete(bookmark) }
+        viewModelScope.launch(Dispatchers.IO) {
+            appDb.bookmarkDao.delete(bookmark)
+            AppWebDav.uploadBookmarks()
+        }
 
     fun deleteNote(note: ReadNote) =
         viewModelScope.launch(Dispatchers.IO) { appDb.readNoteDao.delete(note.noteId) }

@@ -9,6 +9,7 @@ import android.view.View
 import io.legado.app.R
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.isOnLineTxt
 import io.legado.app.help.config.AppConfig
 import io.legado.app.model.ReadBook
@@ -303,6 +304,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
                                         0 -> context.sendToClip(bookmark.bookText)
                                         1 -> GlobalScope.launch(Dispatchers.IO) {
                                             appDb.bookmarkDao.delete(bookmark)
+                                            AppWebDav.uploadBookmarks()
                                         }
                                         2 -> ctx.showDialogFragment(BookmarkDialog(bookmark))
                                     }

@@ -429,7 +429,7 @@ object AppWebDav {
 
     /**
      * 上传书签到 WebDAV
-     * 上传前先合并云端书签（保证不丢失其他设备新增的书签），再全量上传
+     * 直接将本地书签全量覆盖云端，不再做云端合并（合并逻辑移至 downloadBookmarks）
      */
     suspend fun uploadBookmarks() {
         val authorization = authorization ?: return
@@ -437,22 +437,6 @@ object AppWebDav {
         kotlin.runCatching {
             val localBookKeys = appDb.bookDao.all
                 .map { it.name to it.author }.toSet()
-            // 先把云端书签合并到本地（增量，不覆盖），避免上传时丢失其他设备的书签
-            kotlin.runCatching {
-                val byteArray = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).download()
-                val json = String(byteArray)
-                if (json.isJson()) {
-                    val type = object : TypeToken<List<Bookmark>>() {}.type
-                    val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: emptyList()
-                    val toInsert = remoteBookmarks
-                        .filter { (it.bookName to it.bookAuthor) in localBookKeys }
-                        .toTypedArray()
-                    if (toInsert.isNotEmpty()) {
-                        appDb.bookmarkDao.insertIfNotExists(*toInsert)
-                    }
-                }
-            }
-            // 上传合并后的本地书签（全量覆盖云端）
             val bookmarks = appDb.bookmarkDao.all
                 .filter { (it.bookName to it.bookAuthor) in localBookKeys }
             if (bookmarks.isEmpty()) return
@@ -469,8 +453,9 @@ object AppWebDav {
     }
 
     /**
-     * 从 WebDAV 下载书签并合并到本地
-     * 只导入书架中已有书籍的书签，避免引入无关数据
+     * 从 WebDAV 下载书签并同步到本地（替换而非合并）
+     * 对云端有数据的书籍，先删除本地书签再插入云端书签，确保删除操作可以跨设备传播。
+     * 对云端无数据的书籍（本设备独有），保持本地书签不变。
      */
     suspend fun downloadBookmarks() {
         val authorization = authorization ?: return
@@ -481,14 +466,18 @@ object AppWebDav {
             if (!json.isJson()) return
             val type = object : TypeToken<List<Bookmark>>() {}.type
             val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: return
-            if (remoteBookmarks.isEmpty()) return
             val localBookKeys = appDb.bookDao.all
                 .map { it.name to it.author }.toSet()
-            val toInsert = remoteBookmarks
+            val toSync = remoteBookmarks
                 .filter { (it.bookName to it.bookAuthor) in localBookKeys }
-                .toTypedArray()
-            if (toInsert.isNotEmpty()) {
-                appDb.bookmarkDao.insertIfNotExists(*toInsert)
+            // 对云端有数据的书籍执行替换：先删除本地旧书签，再插入云端书签
+            // 这样其他设备上的删除操作才能传播到本设备
+            val booksInCloud = toSync.map { it.bookName to it.bookAuthor }.toSet()
+            booksInCloud.forEach { (name, author) ->
+                appDb.bookmarkDao.deleteByBook(name, author)
+            }
+            if (toSync.isNotEmpty()) {
+                appDb.bookmarkDao.insert(*toSync.toTypedArray())
             }
         }.onFailure {
             currentCoroutineContext().ensureActive()
