@@ -472,6 +472,7 @@ object AppWebDav {
      * 从 WebDAV 下载书签并同步到本地（替换而非合并）
      * 先比较云端文件修改时间与本地同步时间戳，无变化则跳过下载。
      * 有变化时对云端有数据的书籍执行替换，确保删除操作可以跨设备传播。
+     * 不过滤本地书架，使所有书籍的书签均可同步，保持"所有书签"页面跨端一致。
      */
     suspend fun downloadBookmarks() {
         val authorization = authorization ?: return
@@ -488,17 +489,14 @@ object AppWebDav {
             if (!json.isJson()) return
             val type = object : TypeToken<List<Bookmark>>() {}.type
             val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: return
-            val localBookKeys = appDb.bookDao.all
-                .map { it.name to it.author }.toSet()
-            val toSync = remoteBookmarks
-                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
             // 对云端有数据的书籍执行替换：先删除本地旧书签，再插入云端书签
-            val booksInCloud = toSync.map { it.bookName to it.bookAuthor }.toSet()
+            // 不限于本地书架，所有书籍书签均同步
+            val booksInCloud = remoteBookmarks.map { it.bookName to it.bookAuthor }.toSet()
             booksInCloud.forEach { (name, author) ->
                 appDb.bookmarkDao.deleteByBook(name, author)
             }
-            if (toSync.isNotEmpty()) {
-                appDb.bookmarkDao.insert(*toSync.toTypedArray())
+            if (remoteBookmarks.isNotEmpty()) {
+                appDb.bookmarkDao.insert(*remoteBookmarks.toTypedArray())
             }
             // 下载成功：更新本地同步时间为云端修改时间
             if (cloudLastModified > 0) {
@@ -512,15 +510,15 @@ object AppWebDav {
 
     /**
      * 上传阅读时长记录到 WebDAV
-     * 上传前先合并云端记录（取 readTime 最大值），再全量上传，避免覆盖其他设备的时长
+     * 先把云端记录合并到本地（取各设备的较大值），再全量上传。
+     * 确保云端文件始终包含所有设备的记录，避免多设备互相覆盖。
+     * 不限于本地书架中的书籍，确保"阅读记录"页面跨端一致。
      */
     suspend fun uploadReadRecords() {
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
-            val localBookKeys = appDb.bookDao.all
-                .map { it.name to it.author }.toSet()
-            // 先把云端记录合并到本地（取较大值）
+            // 先把云端记录合并到本地（取各设备的较大值）
             kotlin.runCatching {
                 val byteArray = WebDav("${readRecordsWebDavUrl}records.json", authorization).download()
                 val json = String(byteArray)
@@ -530,7 +528,6 @@ object AppWebDav {
                     val localRecords = appDb.readRecordDao.all
                         .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
                     remoteRecords.forEach { remote ->
-                        if ((remote.bookName to remote.bookAuthor) !in localBookKeys) return@forEach
                         val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
                         val local = localRecords[key]
                         if (local == null) {
@@ -546,9 +543,8 @@ object AppWebDav {
                     }
                 }
             }
-            // 上传合并后的本地记录
+            // 上传合并后的本地全量记录（含所有设备，不限书架）
             val records = appDb.readRecordDao.all
-                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
             if (records.isEmpty()) return
             val json = GSON.toJson(records)
             WebDav(readRecordsWebDavUrl, authorization).makeAsDir()
@@ -646,7 +642,9 @@ object AppWebDav {
 
     /**
      * 从 WebDAV 下载阅读时长记录并合并到本地
-     * 若云端 readTime 大于本地，将差值累加到本地（避免重复计算已同步的时长）
+     * 每条记录按 (deviceId, bookName, bookAuthor) 区分——各设备独立累加自己的时长，
+     * 展示层 SUM 所有 deviceId 得到总时长，无需担心重复计算。
+     * 不限于本地书架，确保"阅读记录"页面跨端完全一致。
      */
     suspend fun downloadReadRecords() {
         val authorization = authorization ?: return
@@ -658,23 +656,16 @@ object AppWebDav {
             val type = object : TypeToken<List<ReadRecord>>() {}.type
             val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: return
             if (remoteRecords.isEmpty()) return
-            val localBookKeys = appDb.bookDao.all
-                .map { it.name to it.author }.toSet()
             val localRecords = appDb.readRecordDao.all
                 .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
-                .toMutableMap()
             remoteRecords.forEach { remote ->
-                if ((remote.bookName to remote.bookAuthor) !in localBookKeys) return@forEach
                 val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
                 val local = localRecords[key]
-                if (local == null) {
-                    appDb.readRecordDao.insert(remote)
-                } else if (remote.readTime > local.readTime) {
-                    // 云端比本地多出来的时间是"其他设备新增的"，累加而非覆盖
-                    val delta = remote.readTime - local.readTime
-                    appDb.readRecordDao.insert(
+                when {
+                    local == null -> appDb.readRecordDao.insert(remote)
+                    remote.readTime > local.readTime -> appDb.readRecordDao.insert(
                         local.copy(
-                            readTime = local.readTime + delta,
+                            readTime = remote.readTime,
                             lastRead = maxOf(local.lastRead, remote.lastRead)
                         )
                     )
