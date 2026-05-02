@@ -51,4 +51,7 @@ interface ReadMarkerDao {
     @Query("DELETE FROM read_markers WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
     fun deleteByBook(bookName: String, bookAuthor: String)
 
+    @Query("DELETE FROM read_markers")
+    fun deleteAll()
+
 }

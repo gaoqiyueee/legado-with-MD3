@@ -41,7 +41,6 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.ReadMarker
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
-import io.legado.app.help.SyncEvent
 import io.legado.app.help.IntentData
 import io.legado.app.help.TTS
 import io.legado.app.help.book.BookHelp
@@ -470,24 +469,23 @@ class ReadBookActivity : BaseReadBookActivity(),
             } else {
                 ReadBook.uploadProgress()
             }
-            if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
-                // 用 GlobalScope + NonCancellable 确保 Activity 销毁后上传任务不被取消
-                @Suppress("OPT_IN_USAGE")
-                GlobalScope.launch(IO + NonCancellable) {
-                    // 先确保 session 提交完毕，再上传（避免 race condition）
-                    kotlin.runCatching { ReadBook.commitReadSessionSuspend() }
-                    AppWebDav.markReadRecordDirty()
-                    AppWebDav.trySyncEvent(SyncEvent.Syncing)
-                    var hasError = false
-                    kotlin.runCatching { AppWebDav.uploadBookmarks() }.onFailure { hasError = true }
-                    kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
-                    kotlin.runCatching { AppWebDav.uploadNotes() }.onFailure { hasError = true }
-                    AppWebDav.trySyncEvent(
-                        if (hasError) SyncEvent.Failure("上传失败，请检查网络") else SyncEvent.Success
-                    )
-                }
-            }
             Backup.autoBack(this)
+        }
+        if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
+            // 用 GlobalScope + NonCancellable 确保 Activity 销毁后上传任务不被取消
+            val appContext = applicationContext
+            @Suppress("OPT_IN_USAGE")
+            GlobalScope.launch(IO + NonCancellable) {
+                // 先确保 session 提交完毕，再上传（避免 race condition）
+                kotlin.runCatching { ReadBook.commitReadSessionSuspend() }
+                AppWebDav.markReadRecordDirty()
+                var hasError = false
+                kotlin.runCatching { AppWebDav.uploadBookmarks() }.onFailure { hasError = true }
+                kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
+                kotlin.runCatching { AppWebDav.uploadNotes() }.onFailure { hasError = true }
+                val msg = if (hasError) "上传失败，请检查网络" else "同步完成"
+                withContext(Main) { appContext.toastOnUi(msg) }
+            }
         }
         justInitData = false
         networkChangedListener.unRegister()

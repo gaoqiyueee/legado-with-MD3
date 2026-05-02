@@ -85,6 +85,9 @@ interface BookmarkDao {
     @Query("DELETE FROM bookmarks WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
     fun deleteByBook(bookName: String, bookAuthor: String)
 
+    @Query("DELETE FROM bookmarks")
+    fun deleteAll()
+
     @Query("SELECT DISTINCT bookName FROM bookmarks WHERE bookName = :bookName AND bookAuthor != :excludeAuthor")
     fun getOtherAuthorsByName(bookName: String, excludeAuthor: String): List<String>
 

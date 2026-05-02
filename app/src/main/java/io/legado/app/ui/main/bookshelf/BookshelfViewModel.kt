@@ -14,7 +14,9 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.BookStorageState
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ConflictChoice
 import io.legado.app.help.SyncEvent
+import kotlinx.coroutines.flow.asStateFlow
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
@@ -22,6 +24,8 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.BookSourcePart
+import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.ReadMarker
 import io.legado.app.data.repository.BookGroupRepository
 import io.legado.app.data.repository.UploadRepository
 import io.legado.app.domain.usecase.BatchCacheDownloadUseCase
@@ -123,6 +127,14 @@ class BookshelfViewModel(
     private val eventListenerSource = ConcurrentHashMap<BookSource, Boolean>()
 
     val scrollTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** 同步状态，StateFlow 会 replay 最新值给新订阅者，确保 App 启动时 Toast 可见 */
+    private val _syncState = MutableStateFlow<SyncEvent?>(null)
+    val syncState = _syncState.asStateFlow()
+
+    /** 暂存 fetch 到的云端数据，等待用户选择冲突解决方式后再 apply */
+    private var pendingCloudBookmarks: Pair<List<Bookmark>, Long>? = null
+    private var pendingCloudMarkers: Pair<List<ReadMarker>, Long>? = null
 
     protected val _eventChannel = Channel<BaseRuleEvent>()
     val events = _eventChannel.receiveAsFlow()
@@ -309,6 +321,7 @@ class BookshelfViewModel(
         if (BookshelfConfig.autoRefreshBook) {
             upAllBookToc()
         }
+        syncWebDav()
     }
 
     override fun onCleared() {
@@ -456,32 +469,88 @@ class BookshelfViewModel(
             val fullBooks = bookUrls.mapNotNull { appDb.bookDao.getBook(it) }
             addToWaitUp(fullBooks)
         }
-        // 同步 WebDAV 数据（书签、阅读时长双向合并；阅读进度比较后询问）
+        syncWebDav()
+    }
+
+    fun syncWebDav() {
+        // 同步 WebDAV 数据（书签、位置标记有冲突时询问用户；阅读记录直接合并）
         if (AppWebDav.isOk && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
             execute {
-                AppWebDav.emitSyncEvent(SyncEvent.Syncing)
-                var hasError = false
-                var noChange = true
-                // 书架打开：仅上传本地有脏数据的内容（不强制），然后下载云端更新
-                kotlin.runCatching { AppWebDav.uploadBookmarks() }
-                    .onFailure { hasError = true }
-                    .onSuccess { if (AppWebDav.bookmarkDirty.not()) noChange = false }
-                kotlin.runCatching { AppWebDav.downloadBookmarks() }
-                    .onFailure { hasError = true }.onSuccess { noChange = false }
-                kotlin.runCatching { AppWebDav.uploadReadRecords() }
-                    .onFailure { hasError = true }
-                kotlin.runCatching { AppWebDav.downloadReadRecords() }
-                    .onFailure { hasError = true }.onSuccess { noChange = false }
-                kotlin.runCatching { AppWebDav.downloadMarkers() }
-                    .onFailure { hasError = true }.onSuccess { noChange = false }
-                AppWebDav.emitSyncEvent(
-                    when {
-                        hasError -> SyncEvent.Failure("部分同步失败，请检查网络")
-                        noChange -> SyncEvent.NoChange
-                        else -> SyncEvent.Success
-                    }
-                )
+                _syncState.value = SyncEvent.Syncing
+
+                // 并行 fetch 云端书签和位置标记（只下载，不写 DB）
+                val cloudBookmarkResult = kotlin.runCatching { AppWebDav.fetchRemoteBookmarks() }
+                val cloudMarkerResult = kotlin.runCatching { AppWebDav.fetchRemoteMarkers() }
+
+                if (cloudBookmarkResult.isFailure || cloudMarkerResult.isFailure) {
+                    _syncState.value = SyncEvent.Failure("同步失败，请检查网络或 WebDAV 配置")
+                    return@execute
+                }
+
+                val cloudBookmarks = cloudBookmarkResult.getOrNull()
+                val cloudMarkers = cloudMarkerResult.getOrNull()
+
+                val localBookmarkIds = appDb.bookmarkDao.all.map { it.time }.toSet()
+                val cloudBookmarkIds = cloudBookmarks?.first?.map { it.time }?.toSet() ?: emptySet()
+                val bookmarksDiffer = cloudBookmarks != null && cloudBookmarkIds != localBookmarkIds
+
+                val localMarkerIds = appDb.readMarkerDao.all.map { it.id }.toSet()
+                val cloudMarkerIds = cloudMarkers?.first?.map { it.id }?.toSet() ?: emptySet()
+                val markersDiffer = cloudMarkers != null && cloudMarkerIds != localMarkerIds
+
+                if (bookmarksDiffer || markersDiffer) {
+                    // 暂存云端数据，等待用户决策
+                    pendingCloudBookmarks = cloudBookmarks
+                    pendingCloudMarkers = cloudMarkers
+                    _syncState.value = SyncEvent.Conflict(
+                        bookmarksDiffer = bookmarksDiffer,
+                        markersDiffer = markersDiffer,
+                        cloudBookmarkCount = cloudBookmarkIds.size,
+                        localBookmarkCount = localBookmarkIds.size,
+                        cloudMarkerCount = cloudMarkerIds.size,
+                        localMarkerCount = localMarkerIds.size
+                    )
+                } else {
+                    // 书签和标记无差异，直接同步阅读记录
+                    var hasError = false
+                    kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
+                    kotlin.runCatching { AppWebDav.downloadReadRecords() }.onFailure { hasError = true }
+                    _syncState.value = if (hasError) SyncEvent.Failure("阅读记录同步失败") else SyncEvent.NoChange
+                }
             }
+        }
+    }
+
+    /**
+     * 用户选择冲突解决方式后调用，将暂存的云端数据按策略写入本地，然后同步阅读记录。
+     */
+    fun resolveConflict(choice: ConflictChoice) {
+        val pendingBookmarks = pendingCloudBookmarks
+        val pendingMarkers = pendingCloudMarkers
+        pendingCloudBookmarks = null
+        pendingCloudMarkers = null
+
+        execute {
+            _syncState.value = SyncEvent.Syncing
+            var hasError = false
+
+            pendingBookmarks?.let { (bookmarks, lastModified) ->
+                kotlin.runCatching {
+                    AppWebDav.applyBookmarks(bookmarks, lastModified, choice)
+                }.onFailure { hasError = true }
+            }
+
+            pendingMarkers?.let { (markers, lastModified) ->
+                kotlin.runCatching {
+                    AppWebDav.applyMarkers(markers, lastModified, choice)
+                }.onFailure { hasError = true }
+            }
+
+            // 阅读记录始终直接合并
+            kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
+            kotlin.runCatching { AppWebDav.downloadReadRecords() }.onFailure { hasError = true }
+
+            _syncState.value = if (hasError) SyncEvent.Failure("部分同步失败，请检查网络") else SyncEvent.Success
         }
     }
 

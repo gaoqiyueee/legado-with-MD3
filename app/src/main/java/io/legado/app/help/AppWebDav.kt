@@ -35,9 +35,6 @@ import io.legado.app.utils.toastOnUi
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import java.io.File
@@ -57,6 +54,25 @@ sealed class SyncEvent {
     object Throttled : SyncEvent()
     /** 同步失败 */
     data class Failure(val message: String) : SyncEvent()
+    /** 检测到云端与本地存在差异，等待用户选择处理方式 */
+    data class Conflict(
+        val bookmarksDiffer: Boolean,
+        val markersDiffer: Boolean,
+        val cloudBookmarkCount: Int,
+        val localBookmarkCount: Int,
+        val cloudMarkerCount: Int,
+        val localMarkerCount: Int
+    ) : SyncEvent()
+}
+
+/** 冲突解决方式 */
+enum class ConflictChoice {
+    /** 合并（取两端并集，推荐） */
+    MERGE,
+    /** 以云端为准，覆盖本地 */
+    USE_CLOUD,
+    /** 保留本地，上传覆盖云端 */
+    KEEP_LOCAL
 }
 
 /**
@@ -72,20 +88,6 @@ object AppWebDav {
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
     private val bookInfoWebDavUrl get() = "${rootWebDavUrl}bookInfo/"
     private val markersWebDavUrl get() = "${rootWebDavUrl}markers/"
-
-    /** 同步事件总线，UI 层订阅后展示 Toast */
-    private val _syncEvents = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
-    val syncEvents: SharedFlow<SyncEvent> = _syncEvents.asSharedFlow()
-
-    /** 发布同步事件（suspend 版本，供协程内调用） */
-    suspend fun emitSyncEvent(event: SyncEvent) {
-        _syncEvents.emit(event)
-    }
-
-    /** 发布同步事件（非 suspend 版本，供回调/onPause 调用） */
-    fun trySyncEvent(event: SyncEvent) {
-        _syncEvents.tryEmit(event)
-    }
 
     /** 本地书签是否有未同步到云端的变更 */
     @Volatile
@@ -543,6 +545,116 @@ object AppWebDav {
     }
 
     /**
+     * 仅从 WebDAV 获取云端书签列表，不写本地数据库。
+     * 返回 Pair<list, cloudLastModified>，云端文件不存在或解析失败时返回 null。
+     */
+    suspend fun fetchRemoteBookmarks(): Pair<List<Bookmark>, Long>? {
+        val authorization = authorization ?: return null
+        if (!NetworkUtils.isAvailable()) return null
+        return kotlin.runCatching {
+            val cloudLastModified = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization)
+                .getWebDavFile()?.lastModify ?: 0L
+            val json = String(WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization).download())
+            if (!json.isJson()) return null
+            val type = object : TypeToken<List<Bookmark>>() {}.type
+            val list: List<Bookmark> = GSON.fromJson(json, type) ?: return null
+            Pair(list, cloudLastModified)
+        }.getOrNull()
+    }
+
+    /**
+     * 仅从 WebDAV 获取云端位置标记列表，不写本地数据库。
+     */
+    suspend fun fetchRemoteMarkers(): Pair<List<ReadMarker>, Long>? {
+        val authorization = authorization ?: return null
+        if (!NetworkUtils.isAvailable()) return null
+        return kotlin.runCatching {
+            val cloudLastModified = WebDav("${markersWebDavUrl}markers.json", authorization)
+                .getWebDavFile()?.lastModify ?: 0L
+            val json = String(WebDav("${markersWebDavUrl}markers.json", authorization).download())
+            if (!json.isJson()) return null
+            val type = object : TypeToken<List<ReadMarker>>() {}.type
+            val list: List<ReadMarker> = GSON.fromJson(json, type) ?: return null
+            Pair(list, cloudLastModified)
+        }.getOrNull()
+    }
+
+    /**
+     * 将已获取的云端书签按指定策略写入本地。
+     * MERGE   = 取两端并集（per-item merge）
+     * USE_CLOUD = 云端全量覆盖本地
+     * KEEP_LOCAL = 保留本地，强制上传到云端
+     */
+    suspend fun applyBookmarks(
+        remote: List<Bookmark>,
+        cloudLastModified: Long,
+        choice: ConflictChoice
+    ) {
+        when (choice) {
+            ConflictChoice.USE_CLOUD -> {
+                appDb.bookmarkDao.deleteAll()
+                if (remote.isNotEmpty()) appDb.bookmarkDao.insert(*remote.toTypedArray())
+                if (cloudLastModified > 0) CacheManager.put("bookmarkSyncTime", cloudLastModified)
+            }
+            ConflictChoice.KEEP_LOCAL -> {
+                bookmarkDirty = true
+                uploadBookmarks(force = true)
+            }
+            ConflictChoice.MERGE -> {
+                val localSyncTime = CacheManager.getLong("bookmarkSyncTime") ?: 0L
+                val localByTime = appDb.bookmarkDao.all.associateBy { it.time }
+                val remoteByTime = remote.associateBy { it.time }
+                remote.forEach { r ->
+                    if (!localByTime.containsKey(r.time) && r.time > localSyncTime)
+                        appDb.bookmarkDao.insert(r)
+                }
+                localByTime.forEach { (time, local) ->
+                    if (!remoteByTime.containsKey(time) && time <= localSyncTime)
+                        appDb.bookmarkDao.delete(local)
+                }
+                if (cloudLastModified > 0) CacheManager.put("bookmarkSyncTime", cloudLastModified)
+                bookmarkDirty = true  // 合并结果需要回推到云端
+            }
+        }
+    }
+
+    /**
+     * 将已获取的云端位置标记按指定策略写入本地。
+     */
+    suspend fun applyMarkers(
+        remote: List<ReadMarker>,
+        cloudLastModified: Long,
+        choice: ConflictChoice
+    ) {
+        when (choice) {
+            ConflictChoice.USE_CLOUD -> {
+                appDb.readMarkerDao.deleteAll()
+                if (remote.isNotEmpty()) appDb.readMarkerDao.insert(*remote.toTypedArray())
+                if (cloudLastModified > 0) CacheManager.put("markerSyncTime", cloudLastModified)
+            }
+            ConflictChoice.KEEP_LOCAL -> {
+                markerDirty = true
+                uploadMarkers(force = true)
+            }
+            ConflictChoice.MERGE -> {
+                val localSyncTime = CacheManager.getLong("markerSyncTime") ?: 0L
+                val localById = appDb.readMarkerDao.all.associateBy { it.id }
+                val remoteById = remote.associateBy { it.id }
+                remote.forEach { r ->
+                    if (!localById.containsKey(r.id) && r.id > localSyncTime)
+                        appDb.readMarkerDao.insert(r)
+                }
+                localById.forEach { (id, local) ->
+                    if (!remoteById.containsKey(id) && id <= localSyncTime)
+                        appDb.readMarkerDao.delete(local)
+                }
+                if (cloudLastModified > 0) CacheManager.put("markerSyncTime", cloudLastModified)
+                markerDirty = true
+            }
+        }
+    }
+
+    /**
      * 从 WebDAV 下载书签并合并到本地（per-item merge，不整书覆盖）
      *
      * 合并规则（与 downloadReadRecords 保持一致）：
@@ -805,7 +917,6 @@ object AppWebDav {
             val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: return
             if (remoteRecords.isEmpty()) return
 
-            val lastSyncTime = CacheManager.getLong("readRecordSyncTime") ?: 0L
             val localRecords = appDb.readRecordDao.all
             val localByNameKey = localRecords
                 .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
@@ -824,9 +935,10 @@ object AppWebDav {
                 }
 
                 when {
-                    local == null && remote.lastRead > lastSyncTime ->
+                    // 本地没有该记录：无条件导入（其他设备的记录不依赖 lastSyncTime 判断）
+                    local == null ->
                         appDb.readRecordDao.insert(remote)
-                    local == null -> Unit
+                    // 本地有该记录但云端阅读时间更长：更新
                     remote.readTime > local.readTime ->
                         appDb.readRecordDao.insert(
                             local.copy(

@@ -276,15 +276,15 @@ class ReadRecordViewModel(
             _isRefreshing.value = true
             withContext(Dispatchers.IO) {
                 if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
-                    // 先上传本地数据（含合并），再下载远端最新
-                    AppWebDav.markBookmarkDirty()
-                    AppWebDav.markReadRecordDirty()
-                    kotlin.runCatching { AppWebDav.uploadBookmarks(force = true) }
-                    kotlin.runCatching { AppWebDav.uploadReadRecords(force = true) }
+                    // 先下载远端最新（避免上传时覆盖其他设备的数据），再上传合并结果
                     kotlin.runCatching { AppWebDav.downloadReadRecords() }
                     kotlin.runCatching { AppWebDav.downloadBookmarks() }
                     kotlin.runCatching { AppWebDav.downloadMarkers() }
                     kotlin.runCatching { AppWebDav.downloadNotes() }
+                    AppWebDav.markBookmarkDirty()
+                    AppWebDav.markReadRecordDirty()
+                    kotlin.runCatching { AppWebDav.uploadBookmarks(force = true) }
+                    kotlin.runCatching { AppWebDav.uploadReadRecords(force = true) }
                     // 下载后重新合并去重
                     kotlin.runCatching { repository.autoMergeByBookUrl() }
                 }

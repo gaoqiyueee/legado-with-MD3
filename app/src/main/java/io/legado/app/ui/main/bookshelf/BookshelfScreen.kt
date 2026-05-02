@@ -80,6 +80,7 @@ import io.legado.app.constant.BookStorageState
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ConflictChoice
 import io.legado.app.help.SyncEvent
 import io.legado.app.ui.about.AppLogSheet
 import io.legado.app.ui.book.info.GroupSelectSheet
@@ -185,19 +186,89 @@ fun BookshelfScreen(
         }
     }
 
-    // 同步事件 Toast（书架打开时的下载同步）
-    LaunchedEffect(Unit) {
-        AppWebDav.syncEvents.collect { event ->
-            val msg = when (event) {
-                is SyncEvent.Syncing -> "同步中..."
-                is SyncEvent.Success -> "同步完成"
-                is SyncEvent.NoChange -> "已是最新"
-                is SyncEvent.Throttled -> "稍后同步"
-                is SyncEvent.Failure -> "同步失败：${event.message}"
-            }
-            val duration = if (event is SyncEvent.Failure) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-            Toast.makeText(context, msg, duration).show()
+    // 同步状态 Toast / 冲突 Dialog
+    val syncState by viewModel.syncState.collectAsState()
+    var showConflictDialog by remember { mutableStateOf(false) }
+    var conflictEvent by remember { mutableStateOf<SyncEvent.Conflict?>(null) }
+
+    LaunchedEffect(syncState) {
+        val event = syncState ?: return@LaunchedEffect
+        if (event is SyncEvent.Conflict) {
+            conflictEvent = event
+            showConflictDialog = true
+            return@LaunchedEffect
         }
+        val msg = when (event) {
+            is SyncEvent.Syncing -> "同步中..."
+            is SyncEvent.Success -> "同步完成"
+            is SyncEvent.NoChange -> "已是最新"
+            is SyncEvent.Throttled -> "稍后同步"
+            is SyncEvent.Failure -> "同步失败：${event.message}"
+            else -> return@LaunchedEffect
+        }
+        val duration = if (event is SyncEvent.Failure) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+        Toast.makeText(context, msg, duration).show()
+    }
+
+    // 冲突解决 Dialog
+    conflictEvent?.let { conflict ->
+        val lines = buildList {
+            if (conflict.bookmarksDiffer)
+                add("书签：云端 ${conflict.cloudBookmarkCount} 个，本地 ${conflict.localBookmarkCount} 个")
+            if (conflict.markersDiffer)
+                add("位置标记：云端 ${conflict.cloudMarkerCount} 个，本地 ${conflict.localMarkerCount} 个")
+        }.joinToString("\n")
+
+        AppAlertDialog(
+            show = showConflictDialog,
+            onDismissRequest = {
+                showConflictDialog = false
+                conflictEvent = null
+            },
+            title = "发现同步差异",
+            content = {
+                androidx.compose.foundation.layout.Column(
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.material3.Text(
+                        text = lines,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                    )
+                    androidx.compose.foundation.layout.Spacer(
+                        modifier = androidx.compose.ui.Modifier.padding(top = 16.dp)
+                    )
+                    androidx.compose.foundation.layout.Column(
+                        modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                    ) {
+                        androidx.compose.material3.FilledTonalButton(
+                            onClick = {
+                                showConflictDialog = false
+                                conflictEvent = null
+                                viewModel.resolveConflict(ConflictChoice.MERGE)
+                            },
+                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                        ) { androidx.compose.material3.Text("合并（推荐）") }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                showConflictDialog = false
+                                conflictEvent = null
+                                viewModel.resolveConflict(ConflictChoice.USE_CLOUD)
+                            },
+                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                        ) { androidx.compose.material3.Text("使用云端数据") }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                showConflictDialog = false
+                                conflictEvent = null
+                                viewModel.resolveConflict(ConflictChoice.KEEP_LOCAL)
+                            },
+                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                        ) { androidx.compose.material3.Text("保留本地数据") }
+                    }
+                }
+            }
+        )
     }
 
     val importLauncher = rememberLauncherForActivityResult(
