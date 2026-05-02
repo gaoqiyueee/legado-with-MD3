@@ -131,11 +131,15 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                 // 保存后立即将用户自定义信息上传到云端
                 kotlin.runCatching { AppWebDav.uploadBookInfo(book) }
 
-                // 如果书名或作者变更，级联更新关联表
+                // 如果书名或作者变更，级联更新关联表，并立即上传覆盖云端旧记录
                 val nameChanged = oldBook.name != book.name
                 val authorChanged = oldBook.author != book.author
                 if (nameChanged || authorChanged) {
                     cascadeUpdateBookInfo(oldBook.name, oldBook.author, book.name, book.author)
+                    // 改名后必须立即上传，否则云端仍有旧名记录，下次同步会重新 insert 回来变成两本书
+                    AppWebDav.markReadRecordDirty()
+                    kotlin.runCatching { AppWebDav.uploadReadRecords() }
+                    kotlin.runCatching { AppWebDav.uploadBookmarks() }
                 }
             }
         }.onSuccess {

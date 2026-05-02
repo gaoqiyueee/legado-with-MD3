@@ -458,10 +458,12 @@ class BookshelfViewModel(
         // 同步 WebDAV 数据（书签、阅读时长双向合并；阅读进度比较后询问）
         if (AppWebDav.isOk && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
             execute {
+                // 书架打开：仅上传本地有脏数据的内容（不强制），然后下载云端更新
                 kotlin.runCatching { AppWebDav.uploadBookmarks() }
                 kotlin.runCatching { AppWebDav.downloadBookmarks() }
                 kotlin.runCatching { AppWebDav.uploadReadRecords() }
                 kotlin.runCatching { AppWebDav.downloadReadRecords() }
+                kotlin.runCatching { AppWebDav.downloadMarkers() }
             }
         }
     }

@@ -408,6 +408,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         if (!BuildConfig.DEBUG && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
             lifecycleScope.launch(Dispatchers.IO) {
                 kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                kotlin.runCatching { AppWebDav.downloadMarkers() }
                 kotlin.runCatching { AppWebDav.downloadReadRecords() }
                 kotlin.runCatching { AppWebDav.downloadNotes() }
             }
@@ -441,6 +442,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
                     lifecycleScope.launch(Dispatchers.IO) {
                         kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                        kotlin.runCatching { AppWebDav.downloadMarkers() }
                         kotlin.runCatching { AppWebDav.downloadReadRecords() }
                         kotlin.runCatching { AppWebDav.downloadNotes() }
                     }
@@ -469,6 +471,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 lifecycleScope.launch(Dispatchers.IO) {
                     // 先确保 session 提交完毕，再上传（避免 race condition）
                     kotlin.runCatching { ReadBook.commitReadSessionSuspend() }
+                    AppWebDav.markReadRecordDirty()
                     kotlin.runCatching { AppWebDav.uploadBookmarks() }
                     kotlin.runCatching { AppWebDav.uploadReadRecords() }
                     kotlin.runCatching { AppWebDav.uploadNotes() }

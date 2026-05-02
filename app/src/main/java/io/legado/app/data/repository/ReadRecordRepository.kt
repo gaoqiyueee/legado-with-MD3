@@ -90,7 +90,8 @@ class ReadRecordRepository(
         val dateString = DateUtil.format(Date(newSession.startTime), DatePattern.NORM_DATE_PATTERN)
         updateReadRecordDetail(newSession, segmentDuration, newSession.words, dateString)
         updateReadRecord(newSession, segmentDuration)
-        kotlin.runCatching { AppWebDav.uploadReadRecords() }
+        // 仅标脏，不在此处上传——上传统一收口到 ReadBookActivity.onPause，避免读书期间频繁触发
+        AppWebDav.markReadRecordDirty()
     }
 
     private suspend fun updateReadRecord(session: ReadRecordSession, durationDelta: Long) {
@@ -210,7 +211,8 @@ class ReadRecordRepository(
     }
 
     private suspend fun updateReadRecordTotal(deviceId: String, bookName: String, bookAuthor: String) {
-        val allRemainingSessions = dao.getSessionsByBook(deviceId, bookName, bookAuthor)
+        // 跨所有设备查询剩余 session，防止因 deviceId 不匹配导致误删/误算
+        val allRemainingSessions = dao.getSessionsByBookAllDevices(bookName, bookAuthor)
 
         if (allRemainingSessions.isEmpty()) {
             dao.getReadRecord(deviceId, bookName, bookAuthor)?.let { dao.deleteReadRecord(it) }
@@ -226,9 +228,11 @@ class ReadRecordRepository(
     }
 
     suspend fun deleteReadRecord(record: ReadRecord) {
-        dao.deleteReadRecord(record)
-        dao.deleteDetailsByBook(record.deviceId, record.bookName, record.bookAuthor)
-        dao.deleteSessionsByBook(record.deviceId, record.bookName, record.bookAuthor)
+        // 聚合查询返回的 record.deviceId 可能只代表其中一行；
+        // 必须按 bookName+bookAuthor 删除所有 deviceId 下的记录，否则刷新后其余设备记录重新聚合显示
+        dao.deleteReadRecordAllDevices(record.bookName, record.bookAuthor)
+        dao.deleteDetailsByBookAllDevices(record.bookName, record.bookAuthor)
+        dao.deleteSessionsByBookAllDevices(record.bookName, record.bookAuthor)
     }
 
     /**

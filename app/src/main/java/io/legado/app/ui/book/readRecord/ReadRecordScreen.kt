@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.ViewDay
@@ -82,10 +83,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.zIndex
+import android.widget.Toast
 import cn.hutool.core.date.DateUtil
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
+import io.legado.app.help.AppWebDav
+import io.legado.app.help.UploadState
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPaddingOnlyVertical
 import io.legado.app.ui.theme.adaptiveHorizontalPadding
@@ -145,6 +150,8 @@ fun ReadRecordScreen(
     val displayMode by viewModel.displayMode.collectAsState()
     val viewPeriod by viewModel.viewPeriod.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val uploadState by viewModel.uploadState.collectAsState()
+    val context = LocalContext.current
     val pullToRefreshState = rememberPullToRefreshState()
     var showSearch by remember { mutableStateOf(false) }
     var showCalendar by remember { mutableStateOf(false) }
@@ -197,6 +204,15 @@ fun ReadRecordScreen(
     LaunchedEffect(state.searchKey) {
         if (state.searchKey.isNullOrBlank()) {
             listState.animateScrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(uploadState) {
+        when (uploadState) {
+            UploadState.UPLOADING -> Toast.makeText(context, "上传中...", Toast.LENGTH_SHORT).show()
+            UploadState.SUCCESS -> Toast.makeText(context, "上传完成", Toast.LENGTH_SHORT).show()
+            UploadState.FAILURE -> Toast.makeText(context, "上传失败", Toast.LENGTH_LONG).show()
+            UploadState.IDLE -> Unit
         }
     }
 
@@ -260,6 +276,14 @@ fun ReadRecordScreen(
                         }
                         AppIconButton(onClick = { showSearch = !showSearch }) {
                             AppIcon(Icons.Default.Search, contentDescription = null)
+                        }
+                        if (AppWebDav.isOk) {
+                            AppIconButton(
+                                onClick = { viewModel.uploadToWebDav() },
+                                enabled = uploadState != UploadState.UPLOADING
+                            ) {
+                                AppIcon(Icons.Default.CloudUpload, contentDescription = "上传阅读记录")
+                            }
                         }
                     },
                     scrollBehavior = scrollBehavior

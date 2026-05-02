@@ -72,6 +72,36 @@ object AppWebDav {
         markerDirty = true
     }
 
+    /** 本地阅读记录是否有未同步到云端的变更 */
+    @Volatile
+    var readRecordDirty: Boolean = false
+
+    /** 标记本地阅读记录已变更 */
+    fun markReadRecordDirty() {
+        readRecordDirty = true
+    }
+
+    /**
+     * 全局上传节流：同一个 key 的上传请求在 MIN_UPLOAD_INTERVAL_MS 毫秒内只执行一次。
+     * 防止多个 Activity 的 onResume 同时触发大量 WebDAV 请求导致限流（HTTP 429）。
+     */
+    private val lastUploadTime = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val MIN_UPLOAD_INTERVAL_MS = 10_000L   // 同一资源 10 秒内最多上传一次
+
+    /** 若距上次上传不足 [MIN_UPLOAD_INTERVAL_MS]，则跳过本次并保留 dirty=true，返回 false。
+     *  force=true 时跳过节流检查（用于用户主动触发的强制上传）。*/
+    private fun canUpload(key: String, force: Boolean = false): Boolean {
+        if (force) {
+            lastUploadTime[key] = System.currentTimeMillis()
+            return true
+        }
+        val now = System.currentTimeMillis()
+        val last = lastUploadTime[key] ?: 0L
+        if (now - last < MIN_UPLOAD_INTERVAL_MS) return false
+        lastUploadTime[key] = now
+        return true
+    }
+
     var authorization: Authorization? = null
         private set
 
@@ -455,15 +485,14 @@ object AppWebDav {
      * 上传书签到 WebDAV
      * 仅在本地有变更（bookmarkDirty=true）时才上传，上传成功后更新本地同步时间戳
      */
-    suspend fun uploadBookmarks() {
+    suspend fun uploadBookmarks(force: Boolean = false) {
         if (!bookmarkDirty) return
+        if (!canUpload("bookmarks", force)) return
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
-            val localBookKeys = appDb.bookDao.all
-                .map { it.name to it.author }.toSet()
+            // 上传全部书签，不限于本地书架，确保跨设备完整同步
             val bookmarks = appDb.bookmarkDao.all
-                .filter { (it.bookName to it.bookAuthor) in localBookKeys }
             if (bookmarks.isEmpty()) return
             val json = GSON.toJson(bookmarks)
             WebDav(bookmarksWebDavUrl, authorization).makeAsDir()
@@ -471,12 +500,12 @@ object AppWebDav {
                 json.toByteArray(),
                 "application/json"
             )
-            // 上传成功：记录同步时间，清除 dirty 标记
             CacheManager.put("bookmarkSyncTime", System.currentTimeMillis())
             bookmarkDirty = false
         }.onFailure {
             currentCoroutineContext().ensureActive()
             AppLog.put("上传书签失败\n${it.localizedMessage}", it)
+            throw it
         }
     }
 
@@ -524,8 +553,9 @@ object AppWebDav {
      * 上传位置标记到 WebDAV
      * 仅在本地有变更（markerDirty=true）时才上传
      */
-    suspend fun uploadMarkers() {
+    suspend fun uploadMarkers(force: Boolean = false) {
         if (!markerDirty) return
+        if (!canUpload("markers", force)) return
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
@@ -579,40 +609,15 @@ object AppWebDav {
 
     /**
      * 上传阅读时长记录到 WebDAV
-     * 先把云端记录合并到本地（取各设备的较大值），再全量上传。
-     * 确保云端文件始终包含所有设备的记录，避免多设备互相覆盖。
-     * 不限于本地书架中的书籍，确保"阅读记录"页面跨端一致。
+     * 将本地阅读记录全量覆盖上传到 WebDAV，以本地为准。
+     * 上传成功后记录同步时间戳，供下载侧判断哪些云端记录是"其他设备新增"而非"本机已删除"。
      */
-    suspend fun uploadReadRecords() {
+    suspend fun uploadReadRecords(force: Boolean = false) {
+        if (!readRecordDirty) return
+        if (!canUpload("readRecords", force)) return
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
-            // 先把云端记录合并到本地（取各设备的较大值）
-            kotlin.runCatching {
-                val byteArray = WebDav("${readRecordsWebDavUrl}records.json", authorization).download()
-                val json = String(byteArray)
-                if (json.isJson()) {
-                    val type = object : TypeToken<List<ReadRecord>>() {}.type
-                    val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: emptyList()
-                    val localRecords = appDb.readRecordDao.all
-                        .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
-                    remoteRecords.forEach { remote ->
-                        val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
-                        val local = localRecords[key]
-                        if (local == null) {
-                            appDb.readRecordDao.insert(remote)
-                        } else if (remote.readTime > local.readTime) {
-                            appDb.readRecordDao.insert(
-                                local.copy(
-                                    readTime = remote.readTime,
-                                    lastRead = maxOf(local.lastRead, remote.lastRead)
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-            // 上传合并后的本地全量记录（含所有设备，不限书架）
             val records = appDb.readRecordDao.all
             if (records.isEmpty()) return
             val json = GSON.toJson(records)
@@ -621,6 +626,9 @@ object AppWebDav {
                 json.toByteArray(),
                 "application/json"
             )
+            // 记录本次上传时间，下载侧凭此区分"其他设备新增"与"本机已删除"
+            CacheManager.put("readRecordSyncTime", System.currentTimeMillis())
+            readRecordDirty = false
         }.onFailure {
             currentCoroutineContext().ensureActive()
             AppLog.put("上传阅读记录失败\n${it.localizedMessage}", it)
@@ -725,19 +733,29 @@ object AppWebDav {
             val type = object : TypeToken<List<ReadRecord>>() {}.type
             val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: return
             if (remoteRecords.isEmpty()) return
+
+            // 上次本机上传的时间戳：云端记录的 lastRead <= 该时间戳说明上次同步时它就存在
+            // 若现在本地没有它，是本机之后主动删除的，不应还原
+            val lastSyncTime = CacheManager.getLong("readRecordSyncTime") ?: 0L
             val localRecords = appDb.readRecordDao.all
                 .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
             remoteRecords.forEach { remote ->
                 val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
                 val local = localRecords[key]
                 when {
-                    local == null -> appDb.readRecordDao.insert(remote)
-                    remote.readTime > local.readTime -> appDb.readRecordDao.insert(
-                        local.copy(
-                            readTime = remote.readTime,
-                            lastRead = maxOf(local.lastRead, remote.lastRead)
+                    // 本地没有，但云端记录的最后阅读时间晚于上次同步 → 其他设备新增，合并进来
+                    local == null && remote.lastRead > lastSyncTime ->
+                        appDb.readRecordDao.insert(remote)
+                    // 本地没有，且 lastRead <= 上次同步时间 → 本机在上次同步后主动删除，跳过
+                    local == null -> Unit
+                    // 本地有，云端阅读时间更长 → 其他设备读得更多，更新本地
+                    remote.readTime > local.readTime ->
+                        appDb.readRecordDao.insert(
+                            local.copy(
+                                readTime = remote.readTime,
+                                lastRead = maxOf(local.lastRead, remote.lastRead)
+                            )
                         )
-                    )
                 }
             }
         }.onFailure {

@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,24 +23,37 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -53,7 +67,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -63,6 +76,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.help.UploadState
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.theme.adaptiveContentPadding
@@ -99,6 +113,9 @@ fun AllBookmarkScreen(
     val context = LocalContext.current
 
     val uiState by viewModel.uiState.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
+    val uploadState by viewModel.uploadState.collectAsState()
+    val pullToRefreshState = rememberPullToRefreshState()
     val contentState = when {
         uiState.isLoading -> "LOADING"
         uiState.groups.isEmpty() -> "EMPTY"
@@ -117,8 +134,16 @@ fun AllBookmarkScreen(
     var editingBookmark by remember { mutableStateOf<Bookmark?>(null) }
     var showBottomSheet by remember { mutableStateOf(false) }
     var pendingExportIsMd by remember { mutableStateOf(false) }
+    // 多选模式
+    val selectedIds = remember { mutableStateListOf<Long>() }
+    val isMultiSelectMode = selectedIds.isNotEmpty()
+    // 待导出的书签（null = 全部，非null = 指定列表）
+    var pendingExportList by remember { mutableStateOf<List<Bookmark>?>(null) }
     // 合并对话框状态
     var mergeTargetHeader by remember { mutableStateOf<BookmarkGroupHeader?>(null) }
+    // 分组长按菜单状态
+    var groupMenuHeader by remember { mutableStateOf<BookmarkGroupUiData?>(null) }
+    var showGroupMenu by remember { mutableStateOf(false) }
     val mergeCandidates = remember { mutableStateListOf<String>() }
     val mergeSelected = remember { mutableStateListOf<String>() }
     LaunchedEffect(mergeTargetHeader) {
@@ -141,12 +166,22 @@ fun AllBookmarkScreen(
         }
     }
 
+    // 上传Toast反馈
+    LaunchedEffect(uploadState) {
+        when (uploadState) {
+            UploadState.UPLOADING -> Toast.makeText(context, "上传中...", Toast.LENGTH_SHORT).show()
+            UploadState.SUCCESS -> Toast.makeText(context, "上传完成", Toast.LENGTH_SHORT).show()
+            UploadState.FAILURE -> Toast.makeText(context, "上传失败", Toast.LENGTH_LONG).show()
+            UploadState.IDLE -> Unit
+        }
+    }
+
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.exportBookmark(it, pendingExportIsMd)
-            Toast.makeText(context, "开始导出...", Toast.LENGTH_SHORT).show()
+            viewModel.exportBookmarks(it, pendingExportIsMd, pendingExportList)
+            pendingExportList = null
         }
     }
 
@@ -155,56 +190,75 @@ fun AllBookmarkScreen(
         topBar = {
             Column {
                 GlassMediumFlexibleTopAppBar(
-                    title = "所有书签",
+                    title = if (isMultiSelectMode) "已选 ${selectedIds.size} 条" else "所有书签",
                     scrollBehavior = scrollBehavior,
-                    navigationIcon = { TopBarNavigationButton(onClick = onBack) },
+                    navigationIcon = {
+                        if (isMultiSelectMode) {
+                            TopBarNavigationButton(
+                                onClick = { selectedIds.clear() },
+                                imageVector = Icons.Default.CheckBox,
+                                contentDescription = "退出多选"
+                            )
+                        } else {
+                            TopBarNavigationButton(onClick = onBack)
+                        }
+                    },
                     actions = {
-                        if (bookmarkGroups.isNotEmpty()) {
+                        if (!isMultiSelectMode) {
+                            if (bookmarkGroups.isNotEmpty()) {
+                                TopBarActionButton(
+                                    onClick = { viewModel.toggleAllCollapse(allKeys) },
+                                    imageVector = if (isAllCollapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess,
+                                    contentDescription = null
+                                )
+                            }
                             TopBarActionButton(
-                                onClick = { viewModel.toggleAllCollapse(allKeys) },
-                                imageVector = if (isAllCollapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess,
+                                onClick = { viewModel.uploadToWebDav() },
+                                imageVector = Icons.Default.CloudUpload,
+                                contentDescription = "上传书签"
+                            )
+                            TopBarActionButton(
+                                onClick = {
+                                    showSearch = !showSearch
+                                    if (!showSearch) viewModel.onSearchQueryChanged("")
+                                },
+                                imageVector = Icons.Default.Search,
                                 contentDescription = null
                             )
-                        }
-                        TopBarActionButton(
-                            onClick = {
-                                showSearch = !showSearch
-                                if (!showSearch) viewModel.onSearchQueryChanged("")
-                            },
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null
-                        )
-                        TopBarActionButton(
-                            onClick = { showMenu = true },
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Menu"
-                        )
-                        RoundDropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false }
-                        ) {
-                            RoundDropdownMenuItem(
-                                text = "导出 JSON",
-                                onClick = {
-                                    showMenu = false
-                                    pendingExportIsMd = false
-                                    exportLauncher.launch(null)
-                                }
+                            TopBarActionButton(
+                                onClick = { showMenu = true },
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Menu"
                             )
-                            RoundDropdownMenuItem(
-                                text = "导出 Markdown",
-                                onClick = {
-                                    showMenu = false
-                                    pendingExportIsMd = true
-                                    exportLauncher.launch(null)
-                                }
-                            )
+                            RoundDropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                RoundDropdownMenuItem(
+                                    text = "导出 JSON",
+                                    onClick = {
+                                        showMenu = false
+                                        pendingExportIsMd = false
+                                        pendingExportList = null
+                                        exportLauncher.launch(null)
+                                    }
+                                )
+                                RoundDropdownMenuItem(
+                                    text = "导出 Markdown",
+                                    onClick = {
+                                        showMenu = false
+                                        pendingExportIsMd = true
+                                        pendingExportList = null
+                                        exportLauncher.launch(null)
+                                    }
+                                )
+                            }
                         }
                     }
                 )
                 AnimatedVisibility(
                     modifier = Modifier.adaptiveHorizontalPadding(),
-                    visible = showSearch,
+                    visible = showSearch && !isMultiSelectMode,
                     enter = expandVertically() + fadeIn(),
                     exit = shrinkVertically() + fadeOut()
                 ) {
@@ -217,8 +271,148 @@ fun AllBookmarkScreen(
                     )
                 }
             }
+        },
+        bottomBar = {
+            // 多选模式底部操作栏
+            AnimatedVisibility(
+                visible = isMultiSelectMode,
+                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
+            ) {
+                val selectedBookmarks = remember(selectedIds.toList(), bookmarkGroups) {
+                    bookmarkGroups.flatMap { it.items }
+                        .filter { selectedIds.contains(it.id) }
+                        .map { it.rawBookmark }
+                }
+                var showDeleteConfirm by remember { mutableStateOf(false) }
+                var batchExportMenu by remember { mutableStateOf(false) }
+
+                if (showDeleteConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showDeleteConfirm = false },
+                        title = { Text("批量删除") },
+                        text = { Text("确定删除选中的 ${selectedIds.size} 条书签？此操作不可撤销。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.deleteBookmarks(selectedBookmarks)
+                                selectedIds.clear()
+                                showDeleteConfirm = false
+                            }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+                        }
+                    )
+                }
+
+                BottomAppBar(
+                    modifier = Modifier.navigationBarsPadding(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 全选/取消全选
+                        val allItemIds = bookmarkGroups.flatMap { it.items }.map { it.id }
+                        val isAllSelected = allItemIds.isNotEmpty() && selectedIds.containsAll(allItemIds)
+                        IconButton(onClick = {
+                            if (isAllSelected) {
+                                selectedIds.clear()
+                            } else {
+                                selectedIds.clear()
+                                selectedIds.addAll(allItemIds)
+                            }
+                        }) {
+                            Icon(
+                                imageVector = if (isAllSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                contentDescription = if (isAllSelected) "取消全选" else "全选"
+                            )
+                        }
+                        Text(
+                            text = if (isAllSelected) "取消全选" else "全选",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+
+                        Spacer(Modifier.weight(1f))
+
+                        // 批量导出
+                        Box {
+                            IconButton(onClick = { batchExportMenu = true }) {
+                                Icon(Icons.Default.Download, contentDescription = "导出")
+                            }
+                            RoundDropdownMenu(
+                                expanded = batchExportMenu,
+                                onDismissRequest = { batchExportMenu = false }
+                            ) {
+                                RoundDropdownMenuItem(
+                                    text = "导出 JSON",
+                                    onClick = {
+                                        batchExportMenu = false
+                                        pendingExportIsMd = false
+                                        pendingExportList = selectedBookmarks
+                                        exportLauncher.launch(null)
+                                    }
+                                )
+                                RoundDropdownMenuItem(
+                                    text = "导出 Markdown",
+                                    onClick = {
+                                        batchExportMenu = false
+                                        pendingExportIsMd = true
+                                        pendingExportList = selectedBookmarks
+                                        exportLauncher.launch(null)
+                                    }
+                                )
+                            }
+                        }
+                        Text(
+                            text = "导出",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+
+                        Spacer(Modifier.weight(1f))
+
+                        // 批量删除
+                        IconButton(
+                            onClick = { showDeleteConfirm = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "删除",
+                                tint = if (selectedIds.isNotEmpty())
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            )
+                        }
+                        Text(
+                            text = "删除",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selectedIds.isNotEmpty())
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        )
+                    }
+                }
+            }
         }
     ) { paddingValues ->
+        PullToRefreshBox(
+            isRefreshing = isSyncing,
+            onRefresh = { viewModel.syncFromWebDav() },
+            state = pullToRefreshState,
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pullToRefreshState,
+                    isRefreshing = isSyncing,
+                    modifier = androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+                        .padding(top = paddingValues.calculateTopPadding())
+                )
+            }
+        ) {
         Column(modifier = Modifier.fillMaxSize()) {
             AnimatedContent(
                 targetState = contentState,
@@ -244,7 +438,7 @@ fun AllBookmarkScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = adaptiveContentPadding(
                                 top = paddingValues.calculateTopPadding(),
-                                bottom = 120.dp
+                                bottom = paddingValues.calculateBottomPadding() + 8.dp
                             )
                         ) {
                             items(
@@ -253,6 +447,10 @@ fun AllBookmarkScreen(
                             ) { groupData ->
                                 val isCollapsed =
                                     collapsedGroups.contains(groupData.header.toString())
+                                // 分组内所有 id
+                                val groupItemIds = groupData.items.map { it.id }
+                                val groupSelected = groupItemIds.filter { selectedIds.contains(it) }
+                                val isGroupAllSelected = groupItemIds.isNotEmpty() && groupSelected.size == groupItemIds.size
 
                                 GlassCard(
                                     modifier = Modifier
@@ -265,8 +463,28 @@ fun AllBookmarkScreen(
                                     BookmarkGroupCard(
                                         groupData = groupData,
                                         isCollapsed = isCollapsed,
-                                        onToggle = { viewModel.toggleGroupCollapse(groupData.header) },
-                                        onLongClick = { mergeTargetHeader = groupData.header }
+                                        isMultiSelectMode = isMultiSelectMode,
+                                        isGroupAllSelected = isGroupAllSelected,
+                                        onToggle = {
+                                            if (isMultiSelectMode) {
+                                                // 多选模式下点击分组头 = 切换该组全选
+                                                if (isGroupAllSelected) {
+                                                    selectedIds.removeAll(groupItemIds.toSet())
+                                                } else {
+                                                    groupItemIds.forEach { id ->
+                                                        if (!selectedIds.contains(id)) selectedIds.add(id)
+                                                    }
+                                                }
+                                            } else {
+                                                viewModel.toggleGroupCollapse(groupData.header)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            if (!isMultiSelectMode) {
+                                                groupMenuHeader = groupData
+                                                showGroupMenu = true
+                                            }
+                                        }
                                     )
 
                                     AnimatedVisibility(
@@ -277,17 +495,35 @@ fun AllBookmarkScreen(
                                                 color = LegadoTheme.colorScheme.surface
                                             )
                                             groupData.items.forEach { bookmarkUi ->
+                                                val isSelected = selectedIds.contains(bookmarkUi.id)
                                                 BookmarkItem(
                                                     bookmark = bookmarkUi.rawBookmark,
-                                                    modifier = Modifier.fillMaxWidth(),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .then(
+                                                            if (isSelected)
+                                                                Modifier.background(
+                                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                                                )
+                                                            else Modifier
+                                                        ),
                                                     isDur = false,
                                                     onClick = {
-                                                        editingBookmark = bookmarkUi.rawBookmark
-                                                        showBottomSheet = true
+                                                        if (isMultiSelectMode) {
+                                                            if (isSelected) selectedIds.remove(bookmarkUi.id)
+                                                            else selectedIds.add(bookmarkUi.id)
+                                                        } else {
+                                                            editingBookmark = bookmarkUi.rawBookmark
+                                                            showBottomSheet = true
+                                                        }
                                                     },
                                                     onLongClick = {
-                                                        editingBookmark = bookmarkUi.rawBookmark
-                                                        showBottomSheet = true
+                                                        if (!isMultiSelectMode) {
+                                                            selectedIds.add(bookmarkUi.id)
+                                                        } else {
+                                                            if (isSelected) selectedIds.remove(bookmarkUi.id)
+                                                            else selectedIds.add(bookmarkUi.id)
+                                                        }
                                                     }
                                                 )
                                             }
@@ -323,6 +559,51 @@ fun AllBookmarkScreen(
                         }
                     }
                 }
+            }
+        } // end Column
+
+        // 分组长按菜单（合并 + 导出）
+        val currentGroupMenu = groupMenuHeader
+        Box(modifier = Modifier.fillMaxSize()) {
+            RoundDropdownMenu(
+                expanded = showGroupMenu && currentGroupMenu != null,
+                onDismissRequest = { showGroupMenu = false; groupMenuHeader = null }
+            ) {
+                RoundDropdownMenuItem(
+                    text = "合并同名书籍书签",
+                    onClick = {
+                        showGroupMenu = false
+                        val header = currentGroupMenu?.header
+                        groupMenuHeader = null
+                        if (header != null) mergeTargetHeader = header
+                    }
+                )
+                RoundDropdownMenuItem(
+                    text = "导出本书签 JSON",
+                    onClick = {
+                        showGroupMenu = false
+                        val items = currentGroupMenu?.items?.map { it.rawBookmark }
+                        groupMenuHeader = null
+                        if (!items.isNullOrEmpty()) {
+                            pendingExportIsMd = false
+                            pendingExportList = items
+                            exportLauncher.launch(null)
+                        }
+                    }
+                )
+                RoundDropdownMenuItem(
+                    text = "导出本书签 Markdown",
+                    onClick = {
+                        showGroupMenu = false
+                        val items = currentGroupMenu?.items?.map { it.rawBookmark }
+                        groupMenuHeader = null
+                        if (!items.isNullOrEmpty()) {
+                            pendingExportIsMd = true
+                            pendingExportList = items
+                            exportLauncher.launch(null)
+                        }
+                    }
+                )
             }
         }
 
@@ -389,6 +670,7 @@ fun AllBookmarkScreen(
                 showBottomSheet = false
             }
         )
+        } // end PullToRefreshBox
     }
 }
 
@@ -398,6 +680,8 @@ fun AllBookmarkScreen(
 private fun BookmarkGroupCard(
     groupData: BookmarkGroupUiData,
     isCollapsed: Boolean,
+    isMultiSelectMode: Boolean,
+    isGroupAllSelected: Boolean,
     onToggle: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -414,6 +698,18 @@ private fun BookmarkGroupCard(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // 多选模式显示分组复选框
+        if (isMultiSelectMode) {
+            Icon(
+                imageVector = if (isGroupAllSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .padding(end = 4.dp)
+            )
+        }
+
         // 左侧内容区
         Column(modifier = Modifier.weight(1f)) {
             // 笔记数量大字

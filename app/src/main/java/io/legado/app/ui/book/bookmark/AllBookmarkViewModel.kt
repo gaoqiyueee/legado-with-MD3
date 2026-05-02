@@ -10,6 +10,7 @@ import io.legado.app.data.dao.BookmarkDao
 import io.legado.app.data.dao.ReadRecordDao
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.UploadState
 import io.legado.app.utils.FileDoc
 import io.legado.app.utils.GSON
 import io.legado.app.utils.createFileIfNotExist
@@ -18,9 +19,11 @@ import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.writeToOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -184,6 +187,8 @@ class AllBookmarkViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             bookmarkDao.insert(bookmark)
             AppWebDav.markBookmarkDirty()
+            // 操作完成后立即上传，防止后续同步时云端旧数据覆盖本地变更
+            kotlin.runCatching { AppWebDav.uploadBookmarks() }
         }
     }
 
@@ -191,12 +196,68 @@ class AllBookmarkViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             bookmarkDao.delete(bookmark)
             AppWebDav.markBookmarkDirty()
+            // 立即上传，确保云端也反映删除操作
+            kotlin.runCatching { AppWebDav.uploadBookmarks() }
+        }
+    }
+
+    fun deleteBookmarks(bookmarks: List<Bookmark>) {
+        if (bookmarks.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            bookmarks.forEach { bookmarkDao.delete(it) }
+            AppWebDav.markBookmarkDirty()
+            kotlin.runCatching { AppWebDav.uploadBookmarks() }
         }
     }
 
     suspend fun getMergeCandidates(header: BookmarkGroupHeader): List<String> {
         return withContext(Dispatchers.IO) {
             bookmarkDao.getMergeCandidateAuthors(header.bookName, header.bookAuthor)
+        }
+    }
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    /**
+     * 下拉刷新触发的智能同步：
+     * - 本地有未上传的变更（bookmarkDirty）→ 以本地为准上传到云端
+     * - 本地已是最新（无变更）→ 检查云端是否有其他设备的更新，有则下载
+     * 两种情况互斥，避免"上传后立刻下载又把旧数据拉回来"
+     */
+    fun syncFromWebDav() {
+        if (_isSyncing.value) return
+        if (!AppWebDav.isOk) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isSyncing.value = true
+            if (AppWebDav.bookmarkDirty) {
+                // 本地有变更（增删改合并）：上传，以本地为准
+                kotlin.runCatching { AppWebDav.uploadBookmarks() }
+            } else {
+                // 本地无变更：检查云端是否有新内容（另一台设备写入的）
+                kotlin.runCatching { AppWebDav.downloadBookmarks() }
+            }
+            _isSyncing.value = false
+        }
+    }
+
+    /**
+     * 强制上传按钮：无论本地是否有变更，直接将本地书签覆盖推送到云端。
+     * 适用于想以当前设备为权威来源、主动同步到其他设备的场景。
+     */
+    private val _uploadState = MutableStateFlow(UploadState.IDLE)
+    val uploadState: StateFlow<UploadState> = _uploadState.asStateFlow()
+
+    fun uploadToWebDav() {
+        if (!AppWebDav.isOk) return
+        if (_uploadState.value == UploadState.UPLOADING) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _uploadState.value = UploadState.UPLOADING
+            AppWebDav.markBookmarkDirty()
+            val result = kotlin.runCatching { AppWebDav.uploadBookmarks(force = true) }
+            _uploadState.value = if (result.isSuccess) UploadState.SUCCESS else UploadState.FAILURE
+            delay(2000)
+            _uploadState.value = UploadState.IDLE
         }
     }
 
@@ -207,10 +268,17 @@ class AllBookmarkViewModel(
                 bookmarkDao.insert(bm.copy(bookAuthor = target.bookAuthor))
             }
             bookmarkDao.deleteByBook(target.bookName, sourceAuthor)
+            AppWebDav.markBookmarkDirty()
+            // 合并完成后立即上传
+            kotlin.runCatching { AppWebDav.uploadBookmarks() }
         }
     }
 
     fun exportBookmark(treeUri: Uri, isMarkdown: Boolean) {
+        exportBookmarks(treeUri, isMarkdown, null)
+    }
+
+    fun exportBookmarks(treeUri: Uri, isMarkdown: Boolean, selected: List<Bookmark>?) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -222,11 +290,11 @@ class AllBookmarkViewModel(
                 val fileDoc = dirDoc.createFileIfNotExist(fileName)
 
                 fileDoc.openOutputStream().getOrThrow().use { outputStream ->
-                    val allData = bookmarkDao.all
+                    val data = selected ?: bookmarkDao.all
                     if (isMarkdown) {
-                        writeMarkdown(outputStream, allData)
+                        writeMarkdown(outputStream, data)
                     } else {
-                        GSON.writeToOutputStream(outputStream, allData)
+                        GSON.writeToOutputStream(outputStream, data)
                     }
                 }
 

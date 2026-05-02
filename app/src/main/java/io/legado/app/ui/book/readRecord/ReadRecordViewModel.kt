@@ -11,9 +11,11 @@ import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.repository.BookRepository
 import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.UploadState
 import io.legado.app.help.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +90,8 @@ class ReadRecordViewModel(
     val viewPeriod = _viewPeriod.asStateFlow()
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+    private val _uploadState = MutableStateFlow(UploadState.IDLE)
+    val uploadState: StateFlow<UploadState> = _uploadState.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val loadedDataFlow = _searchKey
@@ -195,15 +199,27 @@ class ReadRecordViewModel(
     }
 
     fun deleteDetail(detail: ReadRecordDetail) {
-        viewModelScope.launch { repository.deleteDetail(detail) }
+        viewModelScope.launch {
+            repository.deleteDetail(detail)
+            AppWebDav.markReadRecordDirty()
+            kotlin.runCatching { AppWebDav.uploadReadRecords() }
+        }
     }
 
     fun deleteSession(session: ReadRecordSession) {
-        viewModelScope.launch { repository.deleteSession(session) }
+        viewModelScope.launch {
+            repository.deleteSession(session)
+            AppWebDav.markReadRecordDirty()
+            kotlin.runCatching { AppWebDav.uploadReadRecords() }
+        }
     }
 
     fun deleteReadRecord(record: ReadRecord) {
-        viewModelScope.launch { repository.deleteReadRecord(record) }
+        viewModelScope.launch {
+            repository.deleteReadRecord(record)
+            AppWebDav.markReadRecordDirty()
+            kotlin.runCatching { AppWebDav.uploadReadRecords() }
+        }
     }
 
     private fun mergeContinuousSessions(sessions: List<ReadRecordSession>): List<ReadRecordSession> {
@@ -244,6 +260,8 @@ class ReadRecordViewModel(
         if (sourceRecords.isEmpty()) return
         viewModelScope.launch {
             repository.mergeReadRecordInto(targetRecord, sourceRecords)
+            AppWebDav.markReadRecordDirty()
+            kotlin.runCatching { AppWebDav.uploadReadRecords() }
         }
     }
 
@@ -259,16 +277,35 @@ class ReadRecordViewModel(
             withContext(Dispatchers.IO) {
                 if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
                     // 先上传本地数据（含合并），再下载远端最新
-                    kotlin.runCatching { AppWebDav.uploadBookmarks() }
-                    kotlin.runCatching { AppWebDav.uploadReadRecords() }
+                    AppWebDav.markBookmarkDirty()
+                    AppWebDav.markReadRecordDirty()
+                    kotlin.runCatching { AppWebDav.uploadBookmarks(force = true) }
+                    kotlin.runCatching { AppWebDav.uploadReadRecords(force = true) }
                     kotlin.runCatching { AppWebDav.downloadReadRecords() }
                     kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                    kotlin.runCatching { AppWebDav.downloadMarkers() }
                     kotlin.runCatching { AppWebDav.downloadNotes() }
                     // 下载后重新合并去重
                     kotlin.runCatching { repository.autoMergeByBookUrl() }
                 }
             }
             _isRefreshing.value = false
+        }
+    }
+
+    /**
+     * 强制上传：以本地数据覆盖云端，同时通过 uploadState 反馈进度（上传中/完成/失败）
+     */
+    fun uploadToWebDav() {
+        if (!AppWebDav.isOk) return
+        if (_uploadState.value == UploadState.UPLOADING) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _uploadState.value = UploadState.UPLOADING
+            AppWebDav.markReadRecordDirty()
+            val result = kotlin.runCatching { AppWebDav.uploadReadRecords(force = true) }
+            _uploadState.value = if (result.isSuccess) UploadState.SUCCESS else UploadState.FAILURE
+            kotlinx.coroutines.delay(2000)
+            _uploadState.value = UploadState.IDLE
         }
     }
 

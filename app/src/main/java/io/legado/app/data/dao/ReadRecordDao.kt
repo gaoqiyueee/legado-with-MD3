@@ -233,8 +233,20 @@ interface ReadRecordDao {
     @Query("DELETE FROM readRecordDetail WHERE deviceId = :deviceId AND bookName = :bookName AND bookAuthor = :bookAuthor")
     suspend fun deleteDetailsByBook(deviceId: String, bookName: String, bookAuthor: String)
 
+    @Query("DELETE FROM readRecordDetail WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
+    suspend fun deleteDetailsByBookAllDevices(bookName: String, bookAuthor: String)
+
     @Query("DELETE FROM readRecordSession WHERE deviceId = :deviceId AND bookName = :bookName AND bookAuthor = :bookAuthor")
     suspend fun deleteSessionsByBook(deviceId: String, bookName: String, bookAuthor: String)
+
+    @Query("DELETE FROM readRecordSession WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
+    suspend fun deleteSessionsByBookAllDevices(bookName: String, bookAuthor: String)
+
+    @Query("DELETE FROM readRecord WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
+    suspend fun deleteReadRecordAllDevices(bookName: String, bookAuthor: String)
+
+    @Query("SELECT * FROM readRecordSession WHERE bookName = :bookName AND bookAuthor = :bookAuthor")
+    suspend fun getSessionsByBookAllDevices(bookName: String, bookAuthor: String): List<ReadRecordSession>
 
     @Query("SELECT * FROM readRecordDetail WHERE deviceId = :deviceId AND bookName = :bookName AND bookAuthor = :bookAuthor")
     suspend fun getDetailsByBook(deviceId: String, bookName: String, bookAuthor: String): List<ReadRecordDetail>
