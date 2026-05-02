@@ -1,6 +1,7 @@
 package io.legado.app.ui.main.bookshelf
 
 import android.content.ClipData
+import android.widget.Toast
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -79,6 +80,7 @@ import io.legado.app.constant.BookStorageState
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.SyncEvent
 import io.legado.app.ui.about.AppLogSheet
 import io.legado.app.ui.book.info.GroupSelectSheet
 import io.legado.app.ui.config.bookshelfConfig.BookshelfConfig
@@ -180,6 +182,21 @@ fun BookshelfScreen(
                     }
                 }
             }
+        }
+    }
+
+    // 同步事件 Toast（书架打开时的下载同步）
+    LaunchedEffect(Unit) {
+        AppWebDav.syncEvents.collect { event ->
+            val msg = when (event) {
+                is SyncEvent.Syncing -> "同步中..."
+                is SyncEvent.Success -> "同步完成"
+                is SyncEvent.NoChange -> "已是最新"
+                is SyncEvent.Throttled -> "稍后同步"
+                is SyncEvent.Failure -> "同步失败：${event.message}"
+            }
+            val duration = if (event is SyncEvent.Failure) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+            Toast.makeText(context, msg, duration).show()
         }
     }
 

@@ -16,6 +16,8 @@ data class ReadMarker(
     val id: Long = System.currentTimeMillis(),
     val bookName: String = "",
     val bookAuthor: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "")
+    val bookUrl: String = "",
     val chapterIndex: Int = 0,
     val chapterPos: Int = 0,
     val chapterName: String = "",

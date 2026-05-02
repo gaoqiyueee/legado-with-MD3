@@ -18,6 +18,8 @@ data class Bookmark(
     val bookName: String = "",
     @ColumnInfo(defaultValue = "")
     val bookAuthor: String = "",
+    @ColumnInfo(defaultValue = "")
+    val bookUrl: String = "",
     var chapterIndex: Int = 0,
     var chapterPos: Int = 0,
     var chapterName: String = "",

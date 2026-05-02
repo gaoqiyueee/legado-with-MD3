@@ -376,7 +376,13 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
     /**
      * 保存来自 Web 端的阅读会话（阅读时间）
      */
-    fun saveExternalReadSession(bookName: String, bookAuthor: String, startTime: Long, endTime: Long) {
+    fun saveExternalReadSession(
+        bookName: String,
+        bookAuthor: String,
+        startTime: Long,
+        endTime: Long,
+        chapterIndex: Int = 0
+    ) {
         val duration = endTime - startTime
         if (duration < MIN_READ_DURATION) return
         ioScope.launch {
@@ -387,7 +393,7 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
                 bookUrl = book?.bookUrl?.takeIf { book?.name == bookName && book?.author == bookAuthor } ?: "",
                 startTime = startTime,
                 endTime = endTime,
-                words = 0L
+                words = chapterIndex.toLong()
             )
             readRecordRepository.saveReadSession(session)
         }

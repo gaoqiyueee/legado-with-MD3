@@ -21,6 +21,7 @@ object DatabaseMigrations {
             migration_35_36, migration_36_37, migration_37_38, migration_38_39,
             migration_39_40, migration_40_41, migration_41_42, migration_42_43,
             migration_82_83, migration_85_86, migration_86_87, migration_87_88,
+            migration_88_89,
         )
     }
 
@@ -566,6 +567,35 @@ object DatabaseMigrations {
             )
             database.execSQL(
                 "CREATE INDEX IF NOT EXISTS `index_read_markers_bookName_bookAuthor` ON `read_markers` (`bookName`, `bookAuthor`)"
+            )
+        }
+    }
+
+    private val migration_88_89 = object : Migration(88, 89) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // 给书签和位置标记加 bookUrl 字段（稳定身份标识，不随书名/作者修改而变化）
+            database.execSQL("ALTER TABLE `bookmarks` ADD COLUMN `bookUrl` TEXT NOT NULL DEFAULT ''")
+            database.execSQL("ALTER TABLE `read_markers` ADD COLUMN `bookUrl` TEXT NOT NULL DEFAULT ''")
+            // 从 books 表回填 bookUrl（按 name + author 关联）
+            database.execSQL(
+                """
+                UPDATE `bookmarks` SET `bookUrl` = (
+                    SELECT `bookUrl` FROM `books`
+                    WHERE `books`.`name` = `bookmarks`.`bookName`
+                      AND `books`.`author` = `bookmarks`.`bookAuthor`
+                    LIMIT 1
+                ) WHERE `bookUrl` = ''
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                UPDATE `read_markers` SET `bookUrl` = (
+                    SELECT `bookUrl` FROM `books`
+                    WHERE `books`.`name` = `read_markers`.`bookName`
+                      AND `books`.`author` = `read_markers`.`bookAuthor`
+                    LIMIT 1
+                ) WHERE `bookUrl` = ''
+                """.trimIndent()
             )
         }
     }

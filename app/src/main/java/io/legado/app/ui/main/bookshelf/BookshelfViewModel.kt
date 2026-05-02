@@ -14,6 +14,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.BookStorageState
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.SyncEvent
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.constant.EventBus
 import io.legado.app.data.appDb
@@ -458,12 +459,28 @@ class BookshelfViewModel(
         // 同步 WebDAV 数据（书签、阅读时长双向合并；阅读进度比较后询问）
         if (AppWebDav.isOk && (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus)) {
             execute {
+                AppWebDav.emitSyncEvent(SyncEvent.Syncing)
+                var hasError = false
+                var noChange = true
                 // 书架打开：仅上传本地有脏数据的内容（不强制），然后下载云端更新
                 kotlin.runCatching { AppWebDav.uploadBookmarks() }
+                    .onFailure { hasError = true }
+                    .onSuccess { if (AppWebDav.bookmarkDirty.not()) noChange = false }
                 kotlin.runCatching { AppWebDav.downloadBookmarks() }
+                    .onFailure { hasError = true }.onSuccess { noChange = false }
                 kotlin.runCatching { AppWebDav.uploadReadRecords() }
+                    .onFailure { hasError = true }
                 kotlin.runCatching { AppWebDav.downloadReadRecords() }
+                    .onFailure { hasError = true }.onSuccess { noChange = false }
                 kotlin.runCatching { AppWebDav.downloadMarkers() }
+                    .onFailure { hasError = true }.onSuccess { noChange = false }
+                AppWebDav.emitSyncEvent(
+                    when {
+                        hasError -> SyncEvent.Failure("部分同步失败，请检查网络")
+                        noChange -> SyncEvent.NoChange
+                        else -> SyncEvent.Success
+                    }
+                )
             }
         }
     }

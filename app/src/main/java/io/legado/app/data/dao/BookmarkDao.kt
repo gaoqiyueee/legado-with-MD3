@@ -67,6 +67,9 @@ interface BookmarkDao {
     )
     fun getByChapter(bookName: String, bookAuthor: String, chapterIndex: Int): List<Bookmark>
 
+    @Query("SELECT * FROM bookmarks WHERE time = :id LIMIT 1")
+    fun getById(id: Long): Bookmark?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(vararg bookmark: Bookmark)
 

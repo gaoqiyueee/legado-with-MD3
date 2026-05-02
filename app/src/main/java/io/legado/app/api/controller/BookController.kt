@@ -431,14 +431,16 @@ object BookController {
             val bookName: String,
             val bookAuthor: String,
             val startTime: Long,
-            val endTime: Long
+            val endTime: Long,
+            val chapterIndex: Int = 0
         )
         GSON.fromJsonObject<WebReadSession>(postData).getOrNull()?.let { session ->
             ReadBook.saveExternalReadSession(
                 bookName = session.bookName,
                 bookAuthor = session.bookAuthor,
                 startTime = session.startTime,
-                endTime = session.endTime
+                endTime = session.endTime,
+                chapterIndex = session.chapterIndex
             )
             return returnData.setData("")
         }

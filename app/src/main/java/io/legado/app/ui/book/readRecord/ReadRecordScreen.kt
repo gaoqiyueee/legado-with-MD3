@@ -89,7 +89,6 @@ import android.widget.Toast
 import cn.hutool.core.date.DateUtil
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
-import io.legado.app.help.AppWebDav
 import io.legado.app.help.UploadState
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPaddingOnlyVertical
@@ -277,13 +276,11 @@ fun ReadRecordScreen(
                         AppIconButton(onClick = { showSearch = !showSearch }) {
                             AppIcon(Icons.Default.Search, contentDescription = null)
                         }
-                        if (AppWebDav.isOk) {
-                            AppIconButton(
-                                onClick = { viewModel.uploadToWebDav() },
-                                enabled = uploadState != UploadState.UPLOADING
-                            ) {
-                                AppIcon(Icons.Default.CloudUpload, contentDescription = "上传阅读记录")
-                            }
+                        AppIconButton(
+                            onClick = { viewModel.uploadToWebDav() },
+                            enabled = uploadState != UploadState.UPLOADING
+                        ) {
+                            AppIcon(Icons.Default.CloudUpload, contentDescription = "上传阅读记录")
                         }
                     },
                     scrollBehavior = scrollBehavior

@@ -363,6 +363,7 @@ data class Book(
         return Bookmark(
             bookName = name,
             bookAuthor = author,
+            bookUrl = bookUrl,
         )
     }
 

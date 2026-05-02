@@ -35,10 +35,29 @@ import io.legado.app.utils.toastOnUi
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import java.io.File
 import kotlin.coroutines.coroutineContext
+
+/**
+ * 同步事件，供 UI 层订阅展示 Toast
+ */
+sealed class SyncEvent {
+    /** 正在同步（下载/上传进行中） */
+    object Syncing : SyncEvent()
+    /** 同步完成（数据有变化，已合并） */
+    object Success : SyncEvent()
+    /** 已是最新，无需同步 */
+    object NoChange : SyncEvent()
+    /** 节流跳过（10 秒内已同步过，稍后再试） */
+    object Throttled : SyncEvent()
+    /** 同步失败 */
+    data class Failure(val message: String) : SyncEvent()
+}
 
 /**
  * webDav初始化会访问网络,不要放到主线程
@@ -53,6 +72,20 @@ object AppWebDav {
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
     private val bookInfoWebDavUrl get() = "${rootWebDavUrl}bookInfo/"
     private val markersWebDavUrl get() = "${rootWebDavUrl}markers/"
+
+    /** 同步事件总线，UI 层订阅后展示 Toast */
+    private val _syncEvents = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
+    val syncEvents: SharedFlow<SyncEvent> = _syncEvents.asSharedFlow()
+
+    /** 发布同步事件（suspend 版本，供协程内调用） */
+    suspend fun emitSyncEvent(event: SyncEvent) {
+        _syncEvents.emit(event)
+    }
+
+    /** 发布同步事件（非 suspend 版本，供回调/onPause 调用） */
+    fun trySyncEvent(event: SyncEvent) {
+        _syncEvents.tryEmit(event)
+    }
 
     /** 本地书签是否有未同步到云端的变更 */
     @Volatile
@@ -510,16 +543,21 @@ object AppWebDav {
     }
 
     /**
-     * 从 WebDAV 下载书签并同步到本地（替换而非合并）
-     * 先比较云端文件修改时间与本地同步时间戳，无变化则跳过下载。
-     * 有变化时对云端有数据的书籍执行替换，确保删除操作可以跨设备传播。
-     * 不过滤本地书架，使所有书籍的书签均可同步，保持"所有书签"页面跨端一致。
+     * 从 WebDAV 下载书签并合并到本地（per-item merge，不整书覆盖）
+     *
+     * 合并规则（与 downloadReadRecords 保持一致）：
+     * - 云端有、本地无 + 云端 time > lastSyncTime  → 其他设备新增，插入本地
+     * - 云端有、本地无 + 云端 time ≤ lastSyncTime  → 本机上次同步后主动删除，跳过（不还原）
+     * - 云端有、本地也有（time 相同）              → 保留本地（本地版本视为更新，无需覆盖）
+     * - 本地有、云端无 + 本地 time ≤ lastSyncTime  → 其他设备删除，删除本地
+     * - 本地有、云端无 + 本地 time > lastSyncTime  → 本机在上次同步后新增，保留
+     *
+     * 这样两端交替添加书签时不会互相覆盖，删除操作也能跨端传播。
      */
     suspend fun downloadBookmarks() {
         val authorization = authorization ?: return
         if (!NetworkUtils.isAvailable()) return
         kotlin.runCatching {
-            // 比较云端最后修改时间与本地上次同步时间，无变化则跳过
             val cloudLastModified = WebDav("${bookmarksWebDavUrl}bookmarks.json", authorization)
                 .getWebDavFile()?.lastModify ?: 0L
             val localSyncTime = CacheManager.getLong("bookmarkSyncTime") ?: 0L
@@ -530,16 +568,32 @@ object AppWebDav {
             if (!json.isJson()) return
             val type = object : TypeToken<List<Bookmark>>() {}.type
             val remoteBookmarks: List<Bookmark> = GSON.fromJson(json, type) ?: return
-            // 对云端有数据的书籍执行替换：先删除本地旧书签，再插入云端书签
-            // 不限于本地书架，所有书籍书签均同步
-            val booksInCloud = remoteBookmarks.map { it.bookName to it.bookAuthor }.toSet()
-            booksInCloud.forEach { (name, author) ->
-                appDb.bookmarkDao.deleteByBook(name, author)
+
+            val localByTime = appDb.bookmarkDao.all.associateBy { it.time }
+            val remoteByTime = remoteBookmarks.associateBy { it.time }
+
+            // 云端有、本地无：判断是其他设备新增还是本机已删除
+            remoteBookmarks.forEach { remote ->
+                if (!localByTime.containsKey(remote.time)) {
+                    if (remote.time > localSyncTime) {
+                        // 其他设备在上次同步后新增，合并进来
+                        appDb.bookmarkDao.insert(remote)
+                    }
+                    // 否则：本机上次同步后主动删除过，不还原
+                }
             }
-            if (remoteBookmarks.isNotEmpty()) {
-                appDb.bookmarkDao.insert(*remoteBookmarks.toTypedArray())
+
+            // 本地有、云端无：判断是其他设备删除还是本机在本次同步后新增
+            localByTime.forEach { (time, local) ->
+                if (!remoteByTime.containsKey(time)) {
+                    if (time <= localSyncTime) {
+                        // 上次同步时就存在、现在云端没了 → 其他设备删除，本地同步删除
+                        appDb.bookmarkDao.delete(local)
+                    }
+                    // 否则：本机在上次同步后新增，保留（下次上传时会推到云端）
+                }
             }
-            // 下载成功：更新本地同步时间为云端修改时间
+
             if (cloudLastModified > 0) {
                 CacheManager.put("bookmarkSyncTime", cloudLastModified)
             }
@@ -575,7 +629,7 @@ object AppWebDav {
     }
 
     /**
-     * 从 WebDAV 下载位置标记并同步到本地（替换策略，与书签一致）
+     * 从 WebDAV 下载位置标记并合并到本地（per-item merge，与 downloadBookmarks 策略一致）
      */
     suspend fun downloadMarkers() {
         val authorization = authorization ?: return
@@ -591,13 +645,26 @@ object AppWebDav {
             if (!json.isJson()) return
             val type = object : TypeToken<List<ReadMarker>>() {}.type
             val remoteMarkers: List<ReadMarker> = GSON.fromJson(json, type) ?: return
-            val booksInCloud = remoteMarkers.map { it.bookName to it.bookAuthor }.toSet()
-            booksInCloud.forEach { (name, author) ->
-                appDb.readMarkerDao.deleteByBook(name, author)
+
+            val localById = appDb.readMarkerDao.all.associateBy { it.id }
+            val remoteById = remoteMarkers.associateBy { it.id }
+
+            remoteMarkers.forEach { remote ->
+                if (!localById.containsKey(remote.id)) {
+                    if (remote.id > localSyncTime) {
+                        appDb.readMarkerDao.insert(remote)
+                    }
+                }
             }
-            if (remoteMarkers.isNotEmpty()) {
-                appDb.readMarkerDao.insert(*remoteMarkers.toTypedArray())
+
+            localById.forEach { (id, local) ->
+                if (!remoteById.containsKey(id)) {
+                    if (id <= localSyncTime) {
+                        appDb.readMarkerDao.delete(local)
+                    }
+                }
             }
+
             if (cloudLastModified > 0) {
                 CacheManager.put("markerSyncTime", cloudLastModified)
             }
@@ -722,6 +789,10 @@ object AppWebDav {
      * 每条记录按 (deviceId, bookName, bookAuthor) 区分——各设备独立累加自己的时长，
      * 展示层 SUM 所有 deviceId 得到总时长，无需担心重复计算。
      * 不限于本地书架，确保"阅读记录"页面跨端完全一致。
+     *
+     * 匹配键优先级：
+     * - 若 remote.bookUrl 非空且本地有同 (deviceId, bookUrl) 的记录 → 按 bookUrl 匹配（抗改名）
+     * - 否则回退到 (deviceId, bookName, bookAuthor)
      */
     suspend fun downloadReadRecords() {
         val authorization = authorization ?: return
@@ -734,21 +805,28 @@ object AppWebDav {
             val remoteRecords: List<ReadRecord> = GSON.fromJson(json, type) ?: return
             if (remoteRecords.isEmpty()) return
 
-            // 上次本机上传的时间戳：云端记录的 lastRead <= 该时间戳说明上次同步时它就存在
-            // 若现在本地没有它，是本机之后主动删除的，不应还原
             val lastSyncTime = CacheManager.getLong("readRecordSyncTime") ?: 0L
             val localRecords = appDb.readRecordDao.all
+            val localByNameKey = localRecords
                 .associateBy { Triple(it.deviceId, it.bookName, it.bookAuthor) }
+            // 按 (deviceId, bookUrl) 的辅助索引，仅包含 bookUrl 非空的记录
+            val localByUrlKey = localRecords
+                .filter { it.bookUrl.isNotBlank() }
+                .associateBy { it.deviceId to it.bookUrl }
+
             remoteRecords.forEach { remote ->
-                val key = Triple(remote.deviceId, remote.bookName, remote.bookAuthor)
-                val local = localRecords[key]
+                // 优先用 bookUrl 匹配（抗改名），回退到 name+author
+                val local = if (remote.bookUrl.isNotBlank()) {
+                    localByUrlKey[remote.deviceId to remote.bookUrl]
+                        ?: localByNameKey[Triple(remote.deviceId, remote.bookName, remote.bookAuthor)]
+                } else {
+                    localByNameKey[Triple(remote.deviceId, remote.bookName, remote.bookAuthor)]
+                }
+
                 when {
-                    // 本地没有，但云端记录的最后阅读时间晚于上次同步 → 其他设备新增，合并进来
                     local == null && remote.lastRead > lastSyncTime ->
                         appDb.readRecordDao.insert(remote)
-                    // 本地没有，且 lastRead <= 上次同步时间 → 本机在上次同步后主动删除，跳过
                     local == null -> Unit
-                    // 本地有，云端阅读时间更长 → 其他设备读得更多，更新本地
                     remote.readTime > local.readTime ->
                         appDb.readRecordDao.insert(
                             local.copy(

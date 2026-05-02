@@ -41,6 +41,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.ReadMarker
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.SyncEvent
 import io.legado.app.help.IntentData
 import io.legado.app.help.TTS
 import io.legado.app.help.book.BookHelp
@@ -143,7 +144,9 @@ import io.legado.app.utils.visible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -468,13 +471,20 @@ class ReadBookActivity : BaseReadBookActivity(),
                 ReadBook.uploadProgress()
             }
             if (AppConfig.syncBookProgress || AppConfig.syncBookProgressPlus) {
-                lifecycleScope.launch(Dispatchers.IO) {
+                // 用 GlobalScope + NonCancellable 确保 Activity 销毁后上传任务不被取消
+                @Suppress("OPT_IN_USAGE")
+                GlobalScope.launch(IO + NonCancellable) {
                     // 先确保 session 提交完毕，再上传（避免 race condition）
                     kotlin.runCatching { ReadBook.commitReadSessionSuspend() }
                     AppWebDav.markReadRecordDirty()
-                    kotlin.runCatching { AppWebDav.uploadBookmarks() }
-                    kotlin.runCatching { AppWebDav.uploadReadRecords() }
-                    kotlin.runCatching { AppWebDav.uploadNotes() }
+                    AppWebDav.trySyncEvent(SyncEvent.Syncing)
+                    var hasError = false
+                    kotlin.runCatching { AppWebDav.uploadBookmarks() }.onFailure { hasError = true }
+                    kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
+                    kotlin.runCatching { AppWebDav.uploadNotes() }.onFailure { hasError = true }
+                    AppWebDav.trySyncEvent(
+                        if (hasError) SyncEvent.Failure("上传失败，请检查网络") else SyncEvent.Success
+                    )
                 }
             }
             Backup.autoBack(this)
@@ -1920,6 +1930,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 val marker = ReadMarker(
                     bookName = book.name,
                     bookAuthor = book.author,
+                    bookUrl = book.bookUrl,
                     chapterIndex = chapterIndex,
                     chapterPos = chapterPos,
                     chapterName = page.title,

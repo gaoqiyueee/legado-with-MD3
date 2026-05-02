@@ -39,6 +39,9 @@ interface ReadMarkerDao {
         chapterPos: Int
     ): ReadMarker?
 
+    @Query("SELECT * FROM read_markers WHERE id = :id LIMIT 1")
+    fun getById(id: Long): ReadMarker?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(vararg marker: ReadMarker)
 
