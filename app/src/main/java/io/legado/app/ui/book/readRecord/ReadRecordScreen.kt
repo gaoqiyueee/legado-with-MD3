@@ -607,6 +607,7 @@ fun SummarySection(
                 bookCount = allBooksCount,
                 totalTimeMillis = totalTime,
                 bookmarkCount = state.totalBookmarkCount,
+                finishedBooksCount = state.finishedBooksCount,
                 bookNamesForCover = state.latestRecords.take(5).map { it.bookName to it.bookAuthor },
                 viewModel = viewModel,
                 onClick = {  }
@@ -1078,6 +1079,7 @@ fun ReadingSummaryCard(
     bookCount: Int,
     totalTimeMillis: Long,
     bookmarkCount: Int = 0,
+    finishedBooksCount: Int = 0,
     bookNamesForCover: List<Pair<String, String>>,
     viewModel: ReadRecordViewModel,
     onClick: () -> Unit
@@ -1148,6 +1150,14 @@ fun ReadingSummaryCard(
                 if (bookmarkCount > 0) {
                     AppText(
                         text = "书签 $bookmarkCount 条",
+                        style = LegadoTheme.typography.bodySmall,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (finishedBooksCount > 0) {
+                    AppText(
+                        text = "已读完 $finishedBooksCount 本",
                         style = LegadoTheme.typography.bodySmall,
                         color = LegadoTheme.colorScheme.onSurfaceVariant
                     )

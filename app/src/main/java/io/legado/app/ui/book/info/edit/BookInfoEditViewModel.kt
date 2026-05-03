@@ -4,11 +4,13 @@ import android.app.Application
 import android.content.Context
 import android.database.sqlite.SQLiteConstraintException
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
@@ -22,8 +24,10 @@ import io.legado.app.utils.FileUtils
 import io.legado.app.utils.MD5Utils
 import io.legado.app.utils.inputStream
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.io.File
@@ -38,6 +42,7 @@ data class BookInfoEditUiState(
     val selectedType: String = "文本",
     val bookTypes: List<String> = listOf("文本", "音频", "图片"),
     val fixedType: Boolean = false,
+    val selectedGroupId: Long = 0L,
     val book: Book? = null,
 )
 
@@ -46,6 +51,9 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
     private val _uiState = MutableStateFlow(BookInfoEditUiState())
     val uiState: StateFlow<BookInfoEditUiState> = _uiState.asStateFlow()
     private val readRecordRepository: ReadRecordRepository by inject()
+
+    val userGroups: StateFlow<List<BookGroup>> = appDb.bookGroupDao.flowSelect()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     fun loadBook(bookUrl: String) {
         execute {
@@ -64,6 +72,7 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                     remark = it.remark,
                     selectedType = _uiState.value.bookTypes[selectedTypeIndex],
                     fixedType = it.config.fixedType,
+                    selectedGroupId = it.group,
                     book = it
                 )
             }
@@ -98,6 +107,12 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
         _uiState.value = _uiState.value.copy(fixedType = fixed)
     }
 
+    fun onGroupToggle(group: BookGroup, checked: Boolean) {
+        val current = _uiState.value.selectedGroupId
+        val newGroupId = if (checked) current or group.groupId else current and group.groupId.inv()
+        _uiState.value = _uiState.value.copy(selectedGroupId = newGroupId)
+    }
+
     fun resetCover() {
         _uiState.value = _uiState.value.copy(coverUrl = book?.coverUrl ?: "")
     }
@@ -110,6 +125,7 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
                 book.name = currentState.name
                 book.author = currentState.author
                 book.remark = currentState.remark
+                book.group = currentState.selectedGroupId
                 val local = if (book.isLocal) BookType.local else 0
                 val bookType = when (currentState.selectedType) {
                     currentState.bookTypes[2] -> BookType.image or local
@@ -169,6 +185,38 @@ class BookInfoEditViewModel(application: Application) : BaseViewModel(applicatio
 
         // 2. 更新阅读记录（readRecord、readRecordDetail、readRecordSession 全部迁移）
         readRecordRepository.renameAndMergeReadRecord(oldName, oldAuthor, newName, newAuthor)
+    }
+
+    fun refreshFromCloud(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        execute {
+            AppWebDav.downloadAllBookInfo()
+            // 拉取最新后重新加载当前书籍状态
+            book?.bookUrl?.let { bookUrl ->
+                book = appDb.bookDao.getBook(bookUrl)
+                book?.let { b ->
+                    val selectedTypeIndex = when {
+                        b.isImage -> 2
+                        b.isAudio -> 1
+                        else -> 0
+                    }
+                    _uiState.value = BookInfoEditUiState(
+                        name = b.name,
+                        author = b.author,
+                        coverUrl = b.getDisplayCover(),
+                        intro = b.getDisplayIntro(),
+                        remark = b.remark,
+                        selectedType = _uiState.value.bookTypes[selectedTypeIndex],
+                        fixedType = b.config.fixedType,
+                        selectedGroupId = b.group,
+                        book = b
+                    )
+                }
+            }
+        }.onSuccess {
+            onSuccess()
+        }.onError {
+            onError(it.localizedMessage ?: "同步失败")
+        }
     }
 
     fun coverChangeTo(context: Context, uri: Uri) {

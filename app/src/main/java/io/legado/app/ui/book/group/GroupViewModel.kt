@@ -5,6 +5,7 @@ import io.legado.app.base.BaseViewModel
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.repository.BookGroupRepository
 import io.legado.app.domain.usecase.RemoveBookGroupAssignmentUseCase
+import io.legado.app.help.AppWebDav
 
 class GroupViewModel(
     application: Application,
@@ -15,6 +16,7 @@ class GroupViewModel(
     fun upGroup(vararg bookGroup: BookGroup, finally: (() -> Unit)? = null) {
         execute {
             bookGroupRepository.update(*bookGroup)
+            kotlin.runCatching { AppWebDav.uploadBookGroups(force = true) }
         }.onFinally {
             finally?.invoke()
         }
@@ -39,6 +41,7 @@ class GroupViewModel(
             )
             bookGroupRepository.getByID(groupId) ?: removeBookGroupAssignmentUseCase.execute(groupId)
             bookGroupRepository.insert(bookGroup)
+            kotlin.runCatching { AppWebDav.uploadBookGroups(force = true) }
         }.onFinally {
             finally()
         }
@@ -48,6 +51,7 @@ class GroupViewModel(
         execute {
             bookGroupRepository.delete(bookGroup)
             removeBookGroupAssignmentUseCase.execute(bookGroup.groupId)
+            kotlin.runCatching { AppWebDav.uploadBookGroups(force = true) }
         }.onFinally {
             finally()
         }
@@ -56,8 +60,19 @@ class GroupViewModel(
     fun clearCover(bookGroup: BookGroup, finally: () -> Unit) {
         execute {
             bookGroupRepository.clearCover(bookGroup.groupId)
+            kotlin.runCatching { AppWebDav.uploadBookGroups(force = true) }
         }.onFinally {
             finally()
+        }
+    }
+
+    fun refreshFromCloud(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        execute {
+            AppWebDav.downloadBookGroups()
+        }.onSuccess {
+            onSuccess()
+        }.onError {
+            onError(it.localizedMessage ?: "同步失败")
         }
     }
 

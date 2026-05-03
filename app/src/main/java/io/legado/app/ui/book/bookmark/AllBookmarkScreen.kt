@@ -752,14 +752,22 @@ private fun BookmarkGroupCard(
                 )
             }
 
-            // 备注（若有）
+            // 备注（若有）—— 彩色圆角矩形底
             if (!groupData.remark.isNullOrBlank()) {
-                AppText(
-                    text = groupData.remark,
-                    style = LegadoTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                    maxLines = 2
-                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(accentColor.copy(alpha = 0.15f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    AppText(
+                        text = groupData.remark,
+                        style = LegadoTheme.typography.labelSmall,
+                        color = accentColor,
+                        maxLines = 2
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -797,6 +805,31 @@ private fun BookmarkGroupCard(
                     color = accentColor,
                     trackColor = accentColor.copy(alpha = 0.15f)
                 )
+            }
+        }
+
+        // 右侧分组标签列
+        if (groupData.groupNames.isNotEmpty()) {
+            Column(
+                modifier = Modifier.padding(start = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                groupData.groupNames.forEach { groupName ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(accentColor.copy(alpha = 0.12f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        AppText(
+                            text = groupName,
+                            style = LegadoTheme.typography.labelSmall,
+                            color = accentColor,
+                            maxLines = 1
+                        )
+                    }
+                }
             }
         }
     }

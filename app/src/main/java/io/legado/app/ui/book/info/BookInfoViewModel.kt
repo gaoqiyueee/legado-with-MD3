@@ -37,6 +37,7 @@ import io.legado.app.help.book.updateTo
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.coroutine.Coroutine
+import io.legado.app.help.AppWebDav
 import io.legado.app.lib.webdav.ObjectNotFoundException
 import io.legado.app.model.AudioPlay
 import io.legado.app.model.BookCover
@@ -147,6 +148,7 @@ class BookInfoViewModel(
             BookInfoIntent.ChangeSourceClick -> setSheet(BookInfoSheet.SourcePicker)
             BookInfoIntent.ReadRecordClick -> setSheet(BookInfoSheet.ReadRecord)
             BookInfoIntent.RemarkClick -> showDialog(BookInfoDialog.EditRemark(currentBook?.remark))
+            BookInfoIntent.RefreshBookInfo -> refreshBookInfoFromCloud()
             BookInfoIntent.ConfirmBackAddToShelf -> {
                 dismissDialog()
                 addToBookshelf {
@@ -366,6 +368,20 @@ class BookInfoViewModel(
             }
         }
     }
+
+    fun refreshBookInfoFromCloud() {
+        execute {
+            AppWebDav.downloadAllBookInfo()
+            currentBook?.bookUrl?.let { bookUrl ->
+                val fresh = appDb.bookDao.getBook(bookUrl)
+                if (fresh != null) {
+                    currentBook = fresh
+                    syncUiState()
+                }
+            }
+        }
+    }
+
     fun syncFromRemote() {
         val book = currentBook ?: return
         if (!book.isLocal) return
@@ -477,6 +493,7 @@ class BookInfoViewModel(
             execute {
                 book.remark = remark
                 book.save()
+                kotlin.runCatching { AppWebDav.uploadBookInfo(book) }
                 book
             }.onSuccess {
                 currentBook = it
@@ -503,6 +520,7 @@ class BookInfoViewModel(
             } else if (AudioPlay.book?.isSameNameAuthor(book) == true) {
                 AudioPlay.book = book
             }
+            kotlin.runCatching { AppWebDav.uploadBookInfo(book) }
             book
         }.onSuccess {
             if (currentBook?.bookUrl == it.bookUrl) {
@@ -891,7 +909,13 @@ class BookInfoViewModel(
             currentHasCustomGroup = false
             refreshMeta(book)
             if (inBookshelf) {
-                saveBook(book)
+                saveBook(book) {
+                    // 分组变更后上传 bookInfo（含 customTag）和分组定义
+                    execute {
+                        kotlin.runCatching { AppWebDav.uploadBookInfo(book) }
+                        kotlin.runCatching { AppWebDav.uploadBookGroups(force = true) }
+                    }
+                }
             } else if (groupId > 0) {
                 addToBookshelf()
             } else {

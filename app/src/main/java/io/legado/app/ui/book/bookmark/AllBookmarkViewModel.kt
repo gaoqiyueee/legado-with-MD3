@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.dao.BookDao
+import io.legado.app.data.dao.BookGroupDao
 import io.legado.app.data.dao.BookmarkDao
 import io.legado.app.data.dao.ReadRecordDao
 import io.legado.app.data.entities.Bookmark
@@ -64,6 +65,8 @@ data class BookmarkGroupUiData(
     val progressFraction: Float,
     /** 用户添加的备注（可能为空） */
     val remark: String?,
+    /** 书籍所属的用户分组名列表 */
+    val groupNames: List<String>,
     val items: List<BookmarkItemUi>
 )
 
@@ -83,7 +86,8 @@ class AllBookmarkViewModel(
     application: Application,
     private val bookmarkDao: BookmarkDao,
     private val bookDao: BookDao,
-    private val readRecordDao: ReadRecordDao
+    private val readRecordDao: ReadRecordDao,
+    private val bookGroupDao: BookGroupDao
 ) : AndroidViewModel(application) {
 
     private val _searchQuery = MutableStateFlow("")
@@ -99,18 +103,24 @@ class AllBookmarkViewModel(
         // 批量查询，避免 N+1
         val bookMap = bookDao.all.associateBy { it.name to it.author }
         val readRecordMap = readRecordDao.all.associateBy { it.bookName to it.bookAuthor }
+        // 预先为每本书获取分组名（按 group 位掩码查询）
+        val groupNamesMap = bookMap.mapValues { (_, book) ->
+            if (book.group > 0) bookGroupDao.getGroupNames(book.group) else emptyList()
+        }
 
         val filteredList = if (query.isBlank()) {
             allBookmarks
         } else {
             allBookmarks.filter {
+                val bookKey = it.bookName to it.bookAuthor
                 it.bookName.contains(query, ignoreCase = true) ||
                         it.bookAuthor.contains(query, ignoreCase = true) ||
                         it.chapterName.contains(query, ignoreCase = true) ||
                         it.bookText.contains(query, ignoreCase = true) ||
                         it.content.contains(query, ignoreCase = true) ||
-                        (!bookMap[it.bookName to it.bookAuthor]?.remark.isNullOrBlank() &&
-                                bookMap[it.bookName to it.bookAuthor]!!.remark!!.contains(query, ignoreCase = true))
+                        (!bookMap[bookKey]?.remark.isNullOrBlank() &&
+                                bookMap[bookKey]!!.remark!!.contains(query, ignoreCase = true)) ||
+                        groupNamesMap[bookKey]?.any { g -> g.contains(query, ignoreCase = true) } == true
             }
         }
 
@@ -133,6 +143,7 @@ class AllBookmarkViewModel(
                     readTimeMs = readRecord?.readTime ?: 0L,
                     progressFraction = progressFraction,
                     remark = book?.remark?.takeIf { it.isNotBlank() },
+                    groupNames = groupNamesMap[header.bookName to header.bookAuthor] ?: emptyList(),
                     items = rawBookmarks.map { bm ->
                         BookmarkItemUi(
                             id = bm.time,

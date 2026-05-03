@@ -6,12 +6,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -95,14 +97,20 @@ fun GroupManageSheet(
         },
         endAction = {
             if (!isEditing) {
-                SmallIconButton(
-                    onClick = {
-                        editingGroup = null
-                        coverPath = null
-                        isEditing = true
-                    },
-                    imageVector = Icons.Default.Add
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SmallIconButton(
+                        onClick = { viewModel.refreshFromCloud(onSuccess = {}, onError = {}) },
+                        imageVector = Icons.Default.Sync
+                    )
+                    SmallIconButton(
+                        onClick = {
+                            editingGroup = null
+                            coverPath = null
+                            isEditing = true
+                        },
+                        imageVector = Icons.Default.Add
+                    )
+                }
             } else {
                 GroupResetCoverAction(
                     group = editingGroup,

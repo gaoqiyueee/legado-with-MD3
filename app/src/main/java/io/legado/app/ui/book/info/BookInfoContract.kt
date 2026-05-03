@@ -77,6 +77,7 @@ sealed interface BookInfoIntent {
     data object ChangeSourceClick : BookInfoIntent
     data object ReadRecordClick : BookInfoIntent
     data object RemarkClick : BookInfoIntent
+    data object RefreshBookInfo : BookInfoIntent
     data object ConfirmBackAddToShelf : BookInfoIntent
     data class ConfirmDelete(val deleteOriginal: Boolean) : BookInfoIntent
     data class UpdateRemark(val remark: String) : BookInfoIntent

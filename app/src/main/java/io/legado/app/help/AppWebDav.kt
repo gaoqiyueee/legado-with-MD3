@@ -6,6 +6,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.ReadMarker
@@ -88,6 +89,7 @@ object AppWebDav {
     private val readRecordsWebDavUrl get() = "${rootWebDavUrl}readRecords/"
     private val bookInfoWebDavUrl get() = "${rootWebDavUrl}bookInfo/"
     private val markersWebDavUrl get() = "${rootWebDavUrl}markers/"
+    private val bookGroupsWebDavUrl get() = "${rootWebDavUrl}bookGroups/"
 
     /** 本地书签是否有未同步到云端的变更 */
     @Volatile
@@ -183,6 +185,7 @@ object AppWebDav {
                 WebDav(readRecordsWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(bookInfoWebDavUrl, mAuthorization).makeAsDir()
                 WebDav(markersWebDavUrl, mAuthorization).makeAsDir()
+                WebDav(bookGroupsWebDavUrl, mAuthorization).makeAsDir()
                 val rootBooksUrl = "${rootWebDavUrl}books/"
                 defaultBookWebDav = RemoteBookWebDav(rootBooksUrl, mAuthorization)
                 authorization = mAuthorization
@@ -951,6 +954,69 @@ object AppWebDav {
         }.onFailure {
             currentCoroutineContext().ensureActive()
             AppLog.put("下载阅读记录失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 上传所有用户自定义书籍分组到 WebDAV。
+     * 文件路径：bookGroups/groups.json
+     * 仅同步用户创建的分组（groupId >= 0），系统虚拟分组（负数 id）不上传。
+     */
+    suspend fun uploadBookGroups(force: Boolean = false) {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        if (!canUpload("bookGroups", force)) return
+        kotlin.runCatching {
+            val userGroups = appDb.bookGroupDao.all.filter { it.groupId >= 0 }
+            val json = GSON.toJson(userGroups)
+            WebDav(bookGroupsWebDavUrl, authorization).makeAsDir()
+            WebDav("${bookGroupsWebDavUrl}groups.json", authorization).upload(
+                json.toByteArray(), "application/json"
+            )
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            AppLog.put("上传书籍分组失败\n${it.localizedMessage}", it)
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载书籍分组并合并到本地。
+     * 合并策略：以 groupId 为主键，云端有而本地无则插入，云端已有则更新 groupName/cover/bookSort/enableRefresh/show/order。
+     * 不删除本地已有而云端没有的分组（防止单端删除覆盖另一端）。
+     */
+    suspend fun downloadBookGroups() {
+        val authorization = authorization ?: return
+        if (!NetworkUtils.isAvailable()) return
+        kotlin.runCatching {
+            val byteArray = WebDav("${bookGroupsWebDavUrl}groups.json", authorization).download()
+            val json = String(byteArray)
+            if (!json.isJson()) return
+            val type = object : TypeToken<List<BookGroup>>() {}.type
+            val remoteGroups: List<BookGroup> = GSON.fromJson(json, type) ?: return
+            val localGroupMap = appDb.bookGroupDao.all.associateBy { it.groupId }
+            remoteGroups.forEach { remote ->
+                if (remote.groupId < 0) return@forEach  // 跳过系统虚拟分组
+                val local = localGroupMap[remote.groupId]
+                if (local == null) {
+                    appDb.bookGroupDao.insert(remote)
+                } else {
+                    val updated = local.copy(
+                        groupName = remote.groupName,
+                        cover = remote.cover,
+                        bookSort = remote.bookSort,
+                        enableRefresh = remote.enableRefresh,
+                        show = remote.show,
+                        order = remote.order
+                    )
+                    if (updated != local) {
+                        appDb.bookGroupDao.update(updated)
+                    }
+                }
+            }
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+            // 云端文件不存在时静默失败
+            AppLog.put("下载书籍分组失败\n${it.localizedMessage}", it)
         }
     }
 

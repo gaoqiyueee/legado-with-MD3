@@ -413,6 +413,8 @@ class ReadBookActivity : BaseReadBookActivity(),
                 kotlin.runCatching { AppWebDav.downloadMarkers() }
                 kotlin.runCatching { AppWebDav.downloadReadRecords() }
                 kotlin.runCatching { AppWebDav.downloadNotes() }
+                kotlin.runCatching { AppWebDav.downloadAllBookInfo() }
+                kotlin.runCatching { AppWebDav.downloadBookGroups() }
             }
         }
         if (bookChanged) {
@@ -483,6 +485,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 kotlin.runCatching { AppWebDav.uploadBookmarks() }.onFailure { hasError = true }
                 kotlin.runCatching { AppWebDav.uploadReadRecords() }.onFailure { hasError = true }
                 kotlin.runCatching { AppWebDav.uploadNotes() }.onFailure { hasError = true }
+                kotlin.runCatching { AppWebDav.uploadBookGroups() }.onFailure { hasError = true }
                 val msg = if (hasError) "上传失败，请检查网络" else "同步完成"
                 withContext(Main) { appContext.toastOnUi(msg) }
             }

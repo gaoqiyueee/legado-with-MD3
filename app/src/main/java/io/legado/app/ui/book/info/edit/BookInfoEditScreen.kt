@@ -3,6 +3,8 @@ package io.legado.app.ui.book.info.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -18,10 +20,12 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -41,16 +45,21 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
+import io.legado.app.data.appDb
 import io.legado.app.ui.book.changecover.ChangeCoverDialog
+import io.legado.app.ui.book.group.GroupEditSheet
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.AppTextField
 import io.legado.app.ui.widget.components.button.MediumOutlinedIconButton
+import io.legado.app.ui.widget.components.button.SmallIconButton
 import io.legado.app.ui.widget.components.button.TopBarButtonVariant
 import io.legado.app.ui.widget.components.button.TopBarNavigationButton
+import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.cover.CoilBookCover
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.settingItem.SwitchSettingItem
+import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.topbar.GlassMediumFlexibleTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.utils.SelectImageContract
@@ -104,7 +113,7 @@ fun BookInfoEditScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun BookInfoEditContent(
     modifier: Modifier = Modifier,
@@ -112,6 +121,8 @@ fun BookInfoEditContent(
     viewModel: BookInfoEditViewModel
 ) {
     val context = LocalContext.current
+    val userGroups by viewModel.userGroups.collectAsStateWithLifecycle()
+    var showAddGroupSheet by remember { mutableStateOf(false) }
 
     val selectCover = rememberLauncherForActivityResult(SelectImageContract()) {
         it.uri?.let { uri ->
@@ -197,6 +208,53 @@ fun BookInfoEditContent(
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
+
+        // 分组选择区域
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    AppText(text = "分组")
+                    SmallIconButton(
+                        onClick = {
+                            if (appDb.bookGroupDao.canAddGroup) {
+                                showAddGroupSheet = true
+                            }
+                        },
+                        imageVector = Icons.Default.Add
+                    )
+                }
+                if (userGroups.isEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AppText(text = "暂无分组，点击 + 新建")
+                } else {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        userGroups.forEach { group ->
+                            val checked = (uiState.selectedGroupId and group.groupId) != 0L
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { viewModel.onGroupToggle(group, it) }
+                                )
+                                AppText(text = group.groupName)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
         AppTextField(
             value = uiState.intro ?: "",
             onValueChange = { viewModel.onIntroChange(it) },
@@ -211,6 +269,11 @@ fun BookInfoEditContent(
             modifier = Modifier.fillMaxWidth()
         )
     }
+
+    GroupEditSheet(
+        show = showAddGroupSheet,
+        onDismissRequest = { showAddGroupSheet = false }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -88,6 +88,9 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
     private val nextChapterLoadingLock = Mutex()
     var readStartTime: Long = System.currentTimeMillis()
 
+    /** 当前书籍的历史累计阅读时长（毫秒） */
+    val totalReadTimeMs: Long get() = readRecord.readTime
+
     /* 跳转进度前进度记录 */
     var lastBookProgress: BookProgress? = null
 

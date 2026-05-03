@@ -52,7 +52,8 @@ data class ReadRecordUiState(
     val currentStreak: Int = 0,
     val bestStreak: Int = 0,
     val last7DaysReadTime: List<Pair<String, Long>> = emptyList(),
-    val almostFinishedBooks: List<AlmostFinishedBook> = emptyList()
+    val almostFinishedBooks: List<AlmostFinishedBook> = emptyList(),
+    val finishedBooksCount: Int = 0
 )
 
 enum class ViewPeriod {
@@ -116,8 +117,9 @@ class ReadRecordViewModel(
         loadedDataFlow,
         _selectedDate,
         _searchKey,
-        _viewPeriod
-    ) { data, selectedDate, searchKey, viewPeriod ->
+        _viewPeriod,
+        bookDao.flowReadFinished()
+    ) { data, selectedDate, searchKey, viewPeriod, finishedBooks ->
         val dateStr = selectedDate?.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
         val dailyCounts = data.details
@@ -174,7 +176,8 @@ class ReadRecordViewModel(
             currentStreak = data.currentStreak,
             bestStreak = data.bestStreak,
             last7DaysReadTime = data.last7DaysReadTime,
-            almostFinishedBooks = data.almostFinishedBooks
+            almostFinishedBooks = data.almostFinishedBooks,
+            finishedBooksCount = finishedBooks.size
         )
     }.stateIn(
         scope = viewModelScope,

@@ -89,6 +89,12 @@ class GroupManageDialog : BaseBottomSheetDialogFragment(R.layout.dialog_recycler
 
     override fun onMenuItemClick(item: MenuItem?): Boolean {
         when (item?.itemId) {
+            R.id.menu_sync -> {
+                viewModel.refreshFromCloud(
+                    onSuccess = { toastOnUi("分组同步完成") },
+                    onError = { toastOnUi("同步失败：$it") }
+                )
+            }
             R.id.menu_add -> {
                 if (appDb.bookGroupDao.canAddGroup) {
                     showDialogFragment(GroupEditDialog())

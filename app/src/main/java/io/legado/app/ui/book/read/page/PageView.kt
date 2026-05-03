@@ -60,6 +60,7 @@ class PageView(context: Context) : FrameLayout(context) {
     private var tvBatteryClassic: BatteryView? = null
     private var tvTimeBatteryClassic: BatteryView? = null
     private var tvTitleArrowClassic: BatteryView? = null
+    private var tvEstimatedReadTime: BatteryView? = null
 
     private var isMainView = false
     var isScroll = false
@@ -309,6 +310,12 @@ class PageView(context: Context) : FrameLayout(context) {
             typeface = ChapterProvider.typeface
             textSize = 12f
         }
+        tvEstimatedReadTime = getTipView(ReadTipConfig.estimatedReadTime)?.apply {
+            tag = ReadTipConfig.estimatedReadTime
+            batteryMode = BatteryView.BatteryMode.NO_BATTERY
+            typeface = ChapterProvider.typeface
+            textSize = 12f
+        }
     }
 
     /**
@@ -439,6 +446,29 @@ class PageView(context: Context) : FrameLayout(context) {
             tvPageAndTotal?.setTextIfNotEqual("${index.plus(1)}/$pageSize  $readProgress")
             tvPage?.setTextIfNotEqual("${index.plus(1)}/$pageSize")
         }
+        tvEstimatedReadTime?.setTextIfNotEqual(calcEstimatedReadTime(chapterIndex, chapterSize))
+    }
+
+    /**
+     * 计算预计剩余阅读时间
+     * 基于累计阅读时长和当前进度推算
+     */
+    private fun calcEstimatedReadTime(chapterIndex: Int, chapterSize: Int): String {
+        if (chapterSize <= 0 || chapterIndex <= 0) return "--"
+        val totalReadMs = ReadBook.totalReadTimeMs
+        if (totalReadMs <= 0) return "--"
+        // 已读进度（0.0 ~ 1.0），用章节索引估算
+        val doneRatio = chapterIndex.toFloat() / chapterSize
+        if (doneRatio <= 0f) return "--"
+        // 按已读时长 / 已读进度，推算总时长，再乘以剩余比例
+        val remainMs = (totalReadMs / doneRatio * (1f - doneRatio)).toLong()
+        val remainMin = remainMs / 60000
+        val timeStr = when {
+            remainMin < 1 -> "<1分钟"
+            remainMin < 60 -> "${remainMin}分钟"
+            else -> "${remainMin / 60}小时${remainMin % 60}分钟"
+        }
+        return "还剩${timeStr}读完"
     }
 
     fun setAutoPager(autoPager: AutoPager?) {

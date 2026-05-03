@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material3.CardDefaults
@@ -152,6 +153,7 @@ private fun BookInfoScreenContent(
                 onShowMenuChange = { showMenu = it },
                 onMenuAction = { onIntent(BookInfoIntent.MenuAction(it)) },
                 onBackPressed = { onIntent(BookInfoIntent.BackPressed) },
+                onIntent = onIntent,
                 scrollBehavior = scrollBehavior,
             )
         },
@@ -332,6 +334,7 @@ private fun BookInfoTransparentTopAppBar(
     onShowMenuChange: (Boolean) -> Unit,
     onMenuAction: (BookInfoMenuAction) -> Unit,
     onBackPressed: () -> Unit,
+    onIntent: (BookInfoIntent) -> Unit,
     scrollBehavior: GlassTopAppBarScrollBehavior,
 ) {
     val hazeState = LocalHazeState.current
@@ -362,6 +365,7 @@ private fun BookInfoTransparentTopAppBar(
                     showMenu = showMenu,
                     onShowMenuChange = onShowMenuChange,
                     onMenuAction = onMenuAction,
+                    onIntent = onIntent,
                 )
             },
             color = resolvedColor,
@@ -380,6 +384,7 @@ private fun BookInfoTransparentTopAppBar(
                     showMenu = showMenu,
                     onShowMenuChange = onShowMenuChange,
                     onMenuAction = onMenuAction,
+                    onIntent = onIntent,
                 )
             },
             scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
@@ -413,11 +418,16 @@ private fun BookInfoTopBarActions(
     showMenu: Boolean,
     onShowMenuChange: (Boolean) -> Unit,
     onMenuAction: (BookInfoMenuAction) -> Unit,
+    onIntent: (BookInfoIntent) -> Unit,
 ) {
     if (state.inBookshelf) {
         TopBarActionButton(
             onClick = { onMenuAction(BookInfoMenuAction.Edit) },
             imageVector = Icons.Default.Edit,
+        )
+        TopBarActionButton(
+            onClick = { onIntent(BookInfoIntent.RefreshBookInfo) },
+            imageVector = Icons.Default.Sync,
         )
     }
     TopBarActionButton(

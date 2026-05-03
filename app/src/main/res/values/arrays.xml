@@ -178,6 +178,7 @@
 		<item>Time and Battery</item>
 		<item>Time and Battery Classic</item>
 		<item>Time and Battery%</item>
+		<item>Estimated Time Remaining</item>
 	</string-array>
 
 	<string-array name="text_font_weight">
