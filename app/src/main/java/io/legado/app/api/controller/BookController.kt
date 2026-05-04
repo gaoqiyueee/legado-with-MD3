@@ -427,13 +427,6 @@ object BookController {
      */
     suspend fun saveReadSession(postData: String?): ReturnData {
         val returnData = ReturnData()
-        data class WebReadSession(
-            val bookName: String,
-            val bookAuthor: String,
-            val startTime: Long,
-            val endTime: Long,
-            val chapterIndex: Int = 0
-        )
         GSON.fromJsonObject<WebReadSession>(postData).getOrNull()?.let { session ->
             ReadBook.saveExternalReadSession(
                 bookName = session.bookName,
@@ -448,3 +441,15 @@ object BookController {
     }
 
 }
+
+/**
+ * Web 端上报阅读会话的请求体。
+ * 必须为顶层类，否则 R8 混淆会破坏 GSON 字段名匹配。
+ */
+private data class WebReadSession(
+    val bookName: String,
+    val bookAuthor: String,
+    val startTime: Long,
+    val endTime: Long,
+    val chapterIndex: Int = 0
+)

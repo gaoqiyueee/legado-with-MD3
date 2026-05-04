@@ -832,6 +832,7 @@ object AppWebDav {
                 "remark" to book.remark,
                 "customCoverUrl" to book.customCoverUrl,
                 "customTag" to book.customTag,
+                "group" to book.group,
                 "modifiedTime" to System.currentTimeMillis()
             )
             val json = GSON.toJson(info)
@@ -878,6 +879,8 @@ object AppWebDav {
                     if (customCoverUrl != book.customCoverUrl) { book.customCoverUrl = customCoverUrl; changed = true }
                     val customTag = info["customTag"] as? String
                     if (customTag != book.customTag) { book.customTag = customTag; changed = true }
+                    val group = (info["group"] as? Number)?.toLong()
+                    if (group != null && group != book.group) { book.group = group; changed = true }
                     if (changed) {
                         appDb.bookDao.update(book)
                     }
@@ -980,9 +983,12 @@ object AppWebDav {
     }
 
     /**
-     * 从 WebDAV 下载书籍分组并合并到本地。
-     * 合并策略：以 groupId 为主键，云端有而本地无则插入，云端已有则更新 groupName/cover/bookSort/enableRefresh/show/order。
-     * 不删除本地已有而云端没有的分组（防止单端删除覆盖另一端）。
+     * 从 WebDAV 下载书籍分组并与本地同步。
+     * 以云端快照为权威：
+     *  - 云端有、本地无 → 插入
+     *  - 云端有、本地有 → 更新字段
+     *  - 本地有、云端无（用户在其他设备已删除）→ 删除本地分组，并清理书籍归属
+     * 系统虚拟分组（groupId < 0）不参与同步。
      */
     suspend fun downloadBookGroups() {
         val authorization = authorization ?: return
@@ -993,9 +999,11 @@ object AppWebDav {
             if (!json.isJson()) return
             val type = object : TypeToken<List<BookGroup>>() {}.type
             val remoteGroups: List<BookGroup> = GSON.fromJson(json, type) ?: return
+            val remoteIds = remoteGroups.filter { it.groupId >= 0 }.map { it.groupId }.toSet()
             val localGroupMap = appDb.bookGroupDao.all.associateBy { it.groupId }
+            // 插入或更新云端存在的分组
             remoteGroups.forEach { remote ->
-                if (remote.groupId < 0) return@forEach  // 跳过系统虚拟分组
+                if (remote.groupId < 0) return@forEach
                 val local = localGroupMap[remote.groupId]
                 if (local == null) {
                     appDb.bookGroupDao.insert(remote)
@@ -1013,9 +1021,15 @@ object AppWebDav {
                     }
                 }
             }
+            // 删除本地有而云端已不存在的用户分组
+            localGroupMap.values.forEach { local ->
+                if (local.groupId >= 0 && local.groupId !in remoteIds) {
+                    appDb.bookGroupDao.delete(local)
+                    appDb.bookDao.removeGroup(local.groupId)
+                }
+            }
         }.onFailure {
             currentCoroutineContext().ensureActive()
-            // 云端文件不存在时静默失败
             AppLog.put("下载书籍分组失败\n${it.localizedMessage}", it)
         }
     }

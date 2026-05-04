@@ -40,6 +40,11 @@ object BackupConfig {
         false
     )
 
+    var syncShowToast by prefDelegate(
+        PreferKey.syncShowToast,
+        false
+    )
+
     var autoCheckNewBackup by prefDelegate(
         PreferKey.autoCheckNewBackup,
         true

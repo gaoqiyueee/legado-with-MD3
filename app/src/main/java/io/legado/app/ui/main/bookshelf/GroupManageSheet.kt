@@ -28,6 +28,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.utils.toastOnUi
+import io.legado.app.ui.config.backupConfig.BackupConfig
 import io.legado.app.ui.book.group.GroupEditContent
 import io.legado.app.ui.book.group.GroupDeleteAction
 import io.legado.app.ui.book.group.GroupResetCoverAction
@@ -99,7 +101,12 @@ fun GroupManageSheet(
             if (!isEditing) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     SmallIconButton(
-                        onClick = { viewModel.refreshFromCloud(onSuccess = {}, onError = {}) },
+                        onClick = {
+                            viewModel.refreshFromCloud(
+                                onSuccess = { if (BackupConfig.syncShowToast) context.toastOnUi("分组已同步") },
+                                onError = { context.toastOnUi("同步失败：$it") }
+                            )
+                        },
                         imageVector = Icons.Default.Sync
                     )
                     SmallIconButton(

@@ -285,6 +285,13 @@ fun BackupConfigScreen(
                     checked = BackupConfig.autoCheckNewBackup,
                     onCheckedChange = { BackupConfig.autoCheckNewBackup = it }
                 )
+
+                SwitchSettingItem(
+                    title = stringResource(R.string.sync_show_toast_t),
+                    description = stringResource(R.string.sync_show_toast_s),
+                    checked = BackupConfig.syncShowToast,
+                    onCheckedChange = { BackupConfig.syncShowToast = it }
+                )
             }
 
                 SplicedColumnGroup(title = stringResource(R.string.backup_restore)) {

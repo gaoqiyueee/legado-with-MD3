@@ -874,6 +874,8 @@
     <string name="sync_book_progress_s">Synchronize reading progress when entering / exiting the reading interface</string>
     <string name="sync_book_progress_plus_t">Sync Enhancement</string>
     <string name="sync_book_progress_plus_s">Sync cloud progress when re-entering the page (e.g., after screen off, returning from background, etc.) or when the network becomes available</string>
+    <string name="sync_show_toast_t">Show Sync Notifications</string>
+    <string name="sync_show_toast_s">Show toast notifications (Syncing / Done) during sync. Turn off to sync silently in the background.</string>
     <string name="sync_book_progress_success">Sync progress success</string>
     <string name="create_bookmark_error">Failed to create bookmark</string>
     <string name="single_url">Single URL</string>

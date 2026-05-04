@@ -123,6 +123,8 @@ cn.hutool.core.util.**{*;}
 
 ## 对外提供api
 -keep class io.legado.app.api.ReturnData{*;}
+# Web 端请求体，GSON 反序列化依赖字段名，必须保留
+-keep class io.legado.app.api.controller.WebReadSession{*;}
 
 # Cronet
 -keepclassmembers class org.chromium.net.X509Util {

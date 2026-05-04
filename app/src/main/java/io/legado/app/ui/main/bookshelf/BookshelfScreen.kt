@@ -84,6 +84,7 @@ import io.legado.app.help.ConflictChoice
 import io.legado.app.help.SyncEvent
 import io.legado.app.ui.about.AppLogSheet
 import io.legado.app.ui.book.info.GroupSelectSheet
+import io.legado.app.ui.config.backupConfig.BackupConfig
 import io.legado.app.ui.config.bookshelfConfig.BookshelfConfig
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
@@ -198,6 +199,7 @@ fun BookshelfScreen(
             showConflictDialog = true
             return@LaunchedEffect
         }
+        if (!BackupConfig.syncShowToast) return@LaunchedEffect
         val msg = when (event) {
             is SyncEvent.Syncing -> "同步中..."
             is SyncEvent.Success -> "同步完成"
